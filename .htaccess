@@ -1,0 +1,9 @@
+RewriteEngine On
+RewriteBase /EDUPREDICT/
+
+RewriteRule ^classes/?$ pages/instructor/classes.php [L,QSA]
+RewriteRule ^classes/archived/?$ pages/instructor/archived-classes.php [L,QSA]
+RewriteRule ^classes/([0-9]+)/?$ pages/instructor/classes.php?class_id=$1 [L,QSA]
+RewriteRule ^classes/([0-9]+)/(attendance|activities|group-activities|quizzes|midterm|finals|participation|analytics|predictions)/?$ pages/instructor/classes.php?class_id=$1&view=$2 [L,QSA]
+RewriteRule ^settings/grading/?$ pages/instructor/grading-settings.php [L,QSA]
+RewriteRule ^settings/account/?$ pages/instructor/account-settings.php [L,QSA]

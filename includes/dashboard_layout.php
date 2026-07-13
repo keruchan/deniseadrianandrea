@@ -4,6 +4,216 @@
  * Each role dashboard passes menu items, cards, and placeholder widgets.
  */
 
+function sidebar_item_is_visible(array $item): bool
+{
+    return !array_key_exists('visible', $item) || (bool) $item['visible'];
+}
+
+function sidebar_item_is_active(array $item, string $active): bool
+{
+    if (array_key_exists('active', $item)) {
+        return (bool) $item['active'];
+    }
+
+    $route = (string) ($item['route'] ?? '');
+    if ($route !== '' && $route === $active) {
+        return true;
+    }
+
+    foreach (($item['active_routes'] ?? []) as $activeRoute) {
+        if ((string) $activeRoute === $active) {
+            return true;
+        }
+    }
+
+    foreach (($item['active_prefixes'] ?? []) as $prefix) {
+        $prefix = (string) $prefix;
+        if ($prefix !== '' && strncmp($active, $prefix, strlen($prefix)) === 0) {
+            return true;
+        }
+    }
+
+    $label = (string) ($item['label'] ?? '');
+
+    return $route === '' && $label !== '' && $label === $active;
+}
+
+function sidebar_item_has_active_child(array $item, string $active): bool
+{
+    foreach (($item['children'] ?? []) as $child) {
+        if (sidebar_item_is_active($child, $active) || sidebar_item_has_active_child($child, $active)) {
+            return true;
+        }
+    }
+
+    foreach (($item['items'] ?? []) as $child) {
+        if (sidebar_item_is_active($child, $active) || sidebar_item_has_active_child($child, $active)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function render_sidebar_icon(array $item): void
+{
+    $icon = (string) ($item['icon'] ?? '');
+
+    if ($icon !== '') {
+        ?>
+        <i class="bi <?php echo e($icon); ?>"></i>
+        <?php
+        return;
+    }
+    ?>
+    <span class="nav-bullet" aria-hidden="true"></span>
+    <?php
+}
+
+function render_sidebar_link(array $item, string $active, string $extraClass = ''): void
+{
+    if (!sidebar_item_is_visible($item)) {
+        return;
+    }
+
+    $classes = ['nav-link'];
+    $customClass = trim((string) ($item['class'] ?? ''));
+
+    if ($extraClass !== '') {
+        $classes[] = $extraClass;
+    }
+
+    if ($customClass !== '') {
+        $classes[] = $customClass;
+    }
+
+    if (sidebar_item_is_active($item, $active)) {
+        $classes[] = 'active';
+    } elseif (sidebar_item_has_active_child($item, $active)) {
+        $classes[] = 'has-active-child';
+    }
+    ?>
+    <a class="<?php echo e(implode(' ', $classes)); ?>" href="<?php echo e((string) ($item['href'] ?? '#')); ?>">
+        <?php render_sidebar_icon($item); ?>
+        <span><?php echo e((string) ($item['label'] ?? 'Menu item')); ?></span>
+    </a>
+    <?php if (!empty($item['children'])): ?>
+        <div class="nav-child-list">
+            <?php foreach ($item['children'] as $child): ?>
+                <?php render_sidebar_link($child, $active, 'nav-child-link'); ?>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
+    <?php
+}
+
+function render_sidebar_text_item(array $item): void
+{
+    if (!sidebar_item_is_visible($item)) {
+        return;
+    }
+
+    $classes = ['nav-text-item'];
+    $customClass = trim((string) ($item['class'] ?? ''));
+
+    if ($customClass !== '') {
+        $classes[] = $customClass;
+    }
+    ?>
+    <div class="<?php echo e(implode(' ', $classes)); ?>">
+        <?php render_sidebar_icon($item); ?>
+        <span><?php echo e((string) ($item['label'] ?? 'Context')); ?></span>
+    </div>
+    <?php
+}
+
+function render_sidebar_group(array $item, string $active): void
+{
+    if (!sidebar_item_is_visible($item)) {
+        return;
+    }
+
+    $items = $item['items'] ?? [];
+    $isActive = sidebar_item_is_active($item, $active) || sidebar_item_has_active_child($item, $active);
+    $defaultExpanded = !empty($item['default_expanded']);
+    $classes = ['nav-group'];
+
+    if ($isActive) {
+        $classes[] = 'has-active';
+    }
+
+    if ($defaultExpanded) {
+        $classes[] = 'is-expanded';
+    }
+    ?>
+    <div class="<?php echo e(implode(' ', $classes)); ?>"
+        data-sidebar-group="<?php echo e((string) ($item['key'] ?? $item['label'] ?? 'group')); ?>"
+        data-sidebar-storage-key="<?php echo e((string) ($item['storage_key'] ?? '')); ?>"
+        data-default-expanded="<?php echo $defaultExpanded ? 'true' : 'false'; ?>">
+        <a class="nav-link nav-group-trigger <?php echo $isActive ? 'active' : ''; ?>"
+            href="<?php echo e((string) ($item['href'] ?? '#')); ?>"
+            aria-expanded="<?php echo $defaultExpanded ? 'true' : 'false'; ?>">
+            <?php render_sidebar_icon($item); ?>
+            <span><?php echo e((string) ($item['label'] ?? 'Menu group')); ?></span>
+            <i class="bi bi-chevron-down nav-caret" aria-hidden="true"></i>
+        </a>
+        <div class="nav-submenu">
+            <?php if (empty($items)): ?>
+                <span class="nav-empty"><?php echo e((string) ($item['empty_label'] ?? 'Nothing here yet')); ?></span>
+            <?php else: ?>
+                <?php foreach ($items as $child): ?>
+                    <?php render_sidebar_link($child, $active, 'nav-submenu-link'); ?>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php
+}
+
+function render_sidebar_section(array $item, string $active): void
+{
+    if (!sidebar_item_is_visible($item)) {
+        return;
+    }
+    ?>
+    <div class="nav-section">
+        <div class="nav-section-title"><?php echo e((string) ($item['label'] ?? 'Section')); ?></div>
+        <div class="nav-section-items">
+            <?php foreach (($item['items'] ?? []) as $child): ?>
+                <?php if ((string) ($child['type'] ?? 'link') === 'text'): ?>
+                    <?php render_sidebar_text_item($child); ?>
+                <?php else: ?>
+                    <?php render_sidebar_link($child, $active); ?>
+                <?php endif; ?>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php
+}
+
+function render_sidebar_nav_panel(array $menuItems, string $active): void
+{
+    ?>
+    <nav class="nav-panel">
+        <?php foreach ($menuItems as $item): ?>
+            <?php
+            $type = (string) ($item['type'] ?? 'link');
+
+            if ($type === 'group') {
+                render_sidebar_group($item, $active);
+            } elseif ($type === 'section') {
+                render_sidebar_section($item, $active);
+            } elseif ($type === 'text') {
+                render_sidebar_text_item($item);
+            } else {
+                render_sidebar_link($item, $active);
+            }
+            ?>
+        <?php endforeach; ?>
+    </nav>
+    <?php
+}
+
 function render_dashboard_page(array $page): void
 {
     $displayName = current_display_name($page['fallback_name'] ?? 'User');
@@ -11,7 +221,7 @@ function render_dashboard_page(array $page): void
     $title = (string) ($page['title'] ?? 'Dashboard');
     $eyebrow = (string) ($page['eyebrow'] ?? 'EDUPREDICT');
     $description = (string) ($page['description'] ?? 'Monitor academic performance from one organized workspace.');
-    $active = (string) ($page['active'] ?? 'Dashboard');
+    $active = (string) ($page['active_route'] ?? $page['active'] ?? 'Dashboard');
     $menuItems = $page['menu'] ?? [];
     $cards = $page['cards'] ?? [];
     $widgets = $page['widgets'] ?? [];
@@ -45,15 +255,7 @@ function render_dashboard_page(array $page): void
                 </div>
             </div>
 
-            <nav class="nav-panel">
-                <?php foreach ($menuItems as $item): ?>
-                    <?php $isActive = ((string) $item['label'] === $active); ?>
-                    <a class="<?php echo $isActive ? 'active' : ''; ?>" href="<?php echo e((string) ($item['href'] ?? '#')); ?>">
-                        <i class="bi <?php echo e((string) ($item['icon'] ?? 'bi-circle')); ?>"></i>
-                        <span><?php echo e((string) $item['label']); ?></span>
-                    </a>
-                <?php endforeach; ?>
-            </nav>
+            <?php render_sidebar_nav_panel($menuItems, $active); ?>
 
             <div class="sidebar-footer">
                 <a href="<?php echo e(url_for('pages/auth/logout.php')); ?>"><i class="bi bi-box-arrow-right"></i><span>Logout</span></a>
@@ -76,15 +278,7 @@ function render_dashboard_page(array $page): void
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
             </div>
             <div class="offcanvas-body">
-                <nav class="nav-panel">
-                    <?php foreach ($menuItems as $item): ?>
-                        <?php $isActive = ((string) $item['label'] === $active); ?>
-                        <a class="<?php echo $isActive ? 'active' : ''; ?>" href="<?php echo e((string) ($item['href'] ?? '#')); ?>">
-                            <i class="bi <?php echo e((string) ($item['icon'] ?? 'bi-circle')); ?>"></i>
-                            <span><?php echo e((string) $item['label']); ?></span>
-                        </a>
-                    <?php endforeach; ?>
-                </nav>
+                <?php render_sidebar_nav_panel($menuItems, $active); ?>
                 <div class="sidebar-footer mt-3">
                     <a href="<?php echo e(url_for('pages/auth/logout.php')); ?>"><i class="bi bi-box-arrow-right"></i><span>Logout</span></a>
                 </div>
