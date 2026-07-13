@@ -15,6 +15,7 @@ function render_dashboard_page(array $page): void
     $menuItems = $page['menu'] ?? [];
     $cards = $page['cards'] ?? [];
     $widgets = $page['widgets'] ?? [];
+    $contentCallback = $page['content'] ?? null;
     $todayLabel = date('l, F j, Y');
     ?>
 <!doctype html>
@@ -126,34 +127,38 @@ function render_dashboard_page(array $page): void
                 <span class="status-pill"><i class="bi bi-shield-check"></i> Foundation ready</span>
             </section>
 
-            <section class="metric-grid mb-4" aria-label="Dashboard cards">
-                <?php foreach ($cards as $card): ?>
-                    <article class="metric-card <?php echo e((string) ($card['tone'] ?? '')); ?>">
-                        <div class="metric-icon"><i class="bi <?php echo e((string) ($card['icon'] ?? 'bi-graph-up')); ?>"></i></div>
-                        <div>
-                            <div class="metric-label"><?php echo e((string) $card['label']); ?></div>
-                            <div class="metric-value"><?php echo e((string) $card['value']); ?></div>
-                            <div class="metric-note"><?php echo e((string) $card['note']); ?></div>
-                        </div>
-                    </article>
-                <?php endforeach; ?>
-            </section>
+            <?php if (is_callable($contentCallback)): ?>
+                <?php $contentCallback(); ?>
+            <?php else: ?>
+                <section class="metric-grid mb-4" aria-label="Dashboard cards">
+                    <?php foreach ($cards as $card): ?>
+                        <article class="metric-card <?php echo e((string) ($card['tone'] ?? '')); ?>">
+                            <div class="metric-icon"><i class="bi <?php echo e((string) ($card['icon'] ?? 'bi-graph-up')); ?>"></i></div>
+                            <div>
+                                <div class="metric-label"><?php echo e((string) $card['label']); ?></div>
+                                <div class="metric-value"><?php echo e((string) $card['value']); ?></div>
+                                <div class="metric-note"><?php echo e((string) $card['note']); ?></div>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </section>
 
-            <section class="widget-grid" aria-label="Dashboard placeholders">
-                <?php foreach ($widgets as $widget): ?>
-                    <article class="widget-panel">
-                        <div class="section-heading">
-                            <h2><?php echo e((string) $widget['title']); ?></h2>
-                            <span><?php echo e((string) ($widget['tag'] ?? 'Planned')); ?></span>
-                        </div>
-                        <p><?php echo e((string) $widget['body']); ?></p>
-                        <div class="empty-state">
-                            <i class="bi <?php echo e((string) ($widget['icon'] ?? 'bi-layout-text-window')); ?>"></i>
-                            <span><?php echo e((string) ($widget['empty'] ?? 'Module placeholder')); ?></span>
-                        </div>
-                    </article>
-                <?php endforeach; ?>
-            </section>
+                <section class="widget-grid" aria-label="Dashboard placeholders">
+                    <?php foreach ($widgets as $widget): ?>
+                        <article class="widget-panel">
+                            <div class="section-heading">
+                                <h2><?php echo e((string) $widget['title']); ?></h2>
+                                <span><?php echo e((string) ($widget['tag'] ?? 'Planned')); ?></span>
+                            </div>
+                            <p><?php echo e((string) $widget['body']); ?></p>
+                            <div class="empty-state">
+                                <i class="bi <?php echo e((string) ($widget['icon'] ?? 'bi-layout-text-window')); ?>"></i>
+                                <span><?php echo e((string) ($widget['empty'] ?? 'Module placeholder')); ?></span>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </section>
+            <?php endif; ?>
         </main>
     </div>
 

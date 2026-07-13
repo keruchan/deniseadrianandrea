@@ -108,3 +108,43 @@ function first_initial(string $name): string
 
     return strtoupper(substr($name, 0, 1));
 }
+
+function current_instructor_id(PDO $pdo): ?int
+{
+    $stmt = $pdo->prepare('SELECT id FROM instructors WHERE user_id = :user_id LIMIT 1');
+    $stmt->execute([':user_id' => (int) ($_SESSION['id'] ?? 0)]);
+    $id = $stmt->fetchColumn();
+
+    return $id !== false ? (int) $id : null;
+}
+
+function current_student_id(PDO $pdo): ?int
+{
+    $stmt = $pdo->prepare('SELECT id FROM students WHERE user_id = :user_id LIMIT 1');
+    $stmt->execute([':user_id' => (int) ($_SESSION['id'] ?? 0)]);
+    $id = $stmt->fetchColumn();
+
+    return $id !== false ? (int) $id : null;
+}
+
+function generate_class_code(PDO $pdo): string
+{
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+    do {
+        $code = '';
+        for ($i = 0; $i < 7; $i++) {
+            $code .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        }
+
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM classes WHERE class_code = :class_code');
+        $stmt->execute([':class_code' => $code]);
+    } while ((int) $stmt->fetchColumn() > 0);
+
+    return $code;
+}
+
+function normalize_class_code(string $code): string
+{
+    return strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $code));
+}

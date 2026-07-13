@@ -98,7 +98,11 @@ CREATE TABLE IF NOT EXISTS `classes` (
   `instructor_id` INT UNSIGNED DEFAULT NULL,
   `class_code` VARCHAR(30) NOT NULL,
   `class_name` VARCHAR(150) NOT NULL,
+  `section` VARCHAR(100) DEFAULT NULL,
   `subject_code` VARCHAR(50) DEFAULT NULL,
+  `subject_name` VARCHAR(150) NOT NULL,
+  `schedule` VARCHAR(150) DEFAULT NULL,
+  `description` TEXT DEFAULT NULL,
   `school_year` VARCHAR(20) DEFAULT NULL,
   `term` VARCHAR(50) DEFAULT NULL,
   `status` ENUM('draft','active','archived') NOT NULL DEFAULT 'draft',
@@ -109,6 +113,21 @@ CREATE TABLE IF NOT EXISTS `classes` (
   KEY `idx_classes_instructor_id` (`instructor_id`),
   KEY `idx_classes_status` (`status`),
   CONSTRAINT `fk_classes_instructor_id` FOREIGN KEY (`instructor_id`) REFERENCES `instructors` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `class_enrollments` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `class_id` INT UNSIGNED NOT NULL,
+  `student_id` INT UNSIGNED NOT NULL,
+  `status` ENUM('active','removed') NOT NULL DEFAULT 'active',
+  `joined_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_class_enrollments_class_student` (`class_id`, `student_id`),
+  KEY `idx_class_enrollments_student_id` (`student_id`),
+  KEY `idx_class_enrollments_status` (`status`),
+  CONSTRAINT `fk_class_enrollments_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_class_enrollments_student_id` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `settings` (

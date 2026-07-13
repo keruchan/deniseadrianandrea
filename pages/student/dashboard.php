@@ -5,6 +5,19 @@ require_once __DIR__ . '/../../includes/dashboard_layout.php';
 
 require_role('student');
 
+$studentId = current_student_id($pdo);
+if ($studentId === null) {
+    redirect_to('pages/auth/logout.php');
+}
+
+$classCountStmt = $pdo->prepare(
+    'SELECT COUNT(*)
+     FROM class_enrollments
+     WHERE student_id = :student_id AND status = "active"'
+);
+$classCountStmt->execute([':student_id' => $studentId]);
+$classCount = (int) $classCountStmt->fetchColumn();
+
 render_dashboard_page([
     'role_label' => 'Student',
     'fallback_name' => 'Student',
@@ -14,7 +27,7 @@ render_dashboard_page([
     'active' => 'Dashboard',
     'menu' => [
         ['label' => 'Dashboard', 'icon' => 'bi-grid-1x2-fill', 'href' => 'dashboard.php'],
-        ['label' => 'My Classes', 'icon' => 'bi-easel2', 'href' => '#'],
+        ['label' => 'My Classes', 'icon' => 'bi-easel2', 'href' => 'classes.php'],
         ['label' => 'Grades', 'icon' => 'bi-clipboard-data', 'href' => '#'],
         ['label' => 'Attendance', 'icon' => 'bi-calendar-check', 'href' => '#'],
         ['label' => 'Progress', 'icon' => 'bi-activity', 'href' => '#'],
@@ -24,7 +37,7 @@ render_dashboard_page([
         ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => '#'],
     ],
     'cards' => [
-        ['label' => 'Enrolled classes', 'value' => '0', 'note' => 'Classes joined by invitation', 'icon' => 'bi-easel2', 'tone' => 'tone-blue'],
+        ['label' => 'Enrolled classes', 'value' => (string) $classCount, 'note' => 'Classes joined by invitation', 'icon' => 'bi-easel2', 'tone' => 'tone-blue'],
         ['label' => 'Current average', 'value' => '0%', 'note' => 'Grade summary placeholder', 'icon' => 'bi-graph-up', 'tone' => 'tone-emerald'],
         ['label' => 'Attendance', 'value' => '0%', 'note' => 'Attendance summary placeholder', 'icon' => 'bi-calendar2-check', 'tone' => 'tone-indigo'],
         ['label' => 'Warnings', 'value' => '0', 'note' => 'No warnings configured yet', 'icon' => 'bi-exclamation-triangle', 'tone' => 'tone-amber'],

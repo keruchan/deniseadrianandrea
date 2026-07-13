@@ -5,6 +5,24 @@ require_once __DIR__ . '/../../includes/dashboard_layout.php';
 
 require_role('instructor');
 
+$instructorId = current_instructor_id($pdo);
+if ($instructorId === null) {
+    redirect_to('pages/auth/logout.php');
+}
+
+$classCountStmt = $pdo->prepare('SELECT COUNT(*) FROM classes WHERE instructor_id = :instructor_id AND status = "active"');
+$classCountStmt->execute([':instructor_id' => $instructorId]);
+$classCount = (int) $classCountStmt->fetchColumn();
+
+$studentCountStmt = $pdo->prepare(
+    'SELECT COUNT(DISTINCT ce.student_id)
+     FROM class_enrollments ce
+     INNER JOIN classes c ON c.id = ce.class_id
+     WHERE c.instructor_id = :instructor_id AND ce.status = "active"'
+);
+$studentCountStmt->execute([':instructor_id' => $instructorId]);
+$studentCount = (int) $studentCountStmt->fetchColumn();
+
 render_dashboard_page([
     'role_label' => 'Instructor',
     'fallback_name' => 'Instructor',
@@ -14,7 +32,7 @@ render_dashboard_page([
     'active' => 'Dashboard',
     'menu' => [
         ['label' => 'Dashboard', 'icon' => 'bi-grid-1x2-fill', 'href' => 'dashboard.php'],
-        ['label' => 'Classes', 'icon' => 'bi-easel2', 'href' => '#'],
+        ['label' => 'Classes', 'icon' => 'bi-easel2', 'href' => 'classes.php'],
         ['label' => 'Attendance', 'icon' => 'bi-calendar-check', 'href' => '#'],
         ['label' => 'Activities', 'icon' => 'bi-journal-check', 'href' => '#'],
         ['label' => 'Quizzes', 'icon' => 'bi-patch-question', 'href' => '#'],
@@ -27,8 +45,8 @@ render_dashboard_page([
         ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => '#'],
     ],
     'cards' => [
-        ['label' => 'My classes', 'value' => '0', 'note' => 'Class shells will appear here', 'icon' => 'bi-easel2', 'tone' => 'tone-blue'],
-        ['label' => 'Students', 'value' => '0', 'note' => 'Learners enrolled across classes', 'icon' => 'bi-mortarboard', 'tone' => 'tone-emerald'],
+        ['label' => 'My classes', 'value' => (string) $classCount, 'note' => 'Active classes created', 'icon' => 'bi-easel2', 'tone' => 'tone-blue'],
+        ['label' => 'Students', 'value' => (string) $studentCount, 'note' => 'Learners enrolled across classes', 'icon' => 'bi-mortarboard', 'tone' => 'tone-emerald'],
         ['label' => 'Grade items', 'value' => '0', 'note' => 'Activities and quizzes planned', 'icon' => 'bi-journal-text', 'tone' => 'tone-indigo'],
         ['label' => 'Prediction watchlist', 'value' => '0', 'note' => 'Future academic risk signals', 'icon' => 'bi-stars', 'tone' => 'tone-amber'],
     ],
