@@ -1,0 +1,230 @@
+:root {
+    --blue-950: #0f172a;
+    --blue-900: #172554;
+    --blue-800: #1e3a8a;
+    --indigo-600: #4f46e5;
+    --emerald-500: #10b981;
+    --slate-600: #475569;
+    --slate-100: #f1f5f9;
+    --line: #dbe3ef;
+    --paper: #ffffff;
+    --radius: 8px;
+    --shadow: 0 20px 60px rgba(15, 23, 42, 0.16);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Inter", system-ui, sans-serif;
+    color: var(--blue-950);
+    background: linear-gradient(135deg, #eef2ff, #ecfeff 48%, #f8fafc);
+}
+
+h1,
+h2,
+.auth-brand {
+    font-family: "Manrope", "Inter", sans-serif;
+    letter-spacing: 0;
+}
+
+a {
+    color: var(--indigo-600);
+    text-decoration: none;
+    font-weight: 700;
+}
+
+a:hover {
+    color: var(--blue-900);
+    text-decoration: underline;
+}
+
+a:focus-visible,
+button:focus-visible,
+.form-control:focus-visible {
+    outline: 3px solid var(--emerald-500);
+    outline-offset: 2px;
+}
+
+.auth-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.2rem;
+}
+
+.auth-shell.spacious {
+    align-items: flex-start;
+    padding: 2rem 1.2rem;
+}
+
+.auth-card,
+.register-card {
+    width: min(1080px, 100%);
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    box-shadow: var(--shadow);
+}
+
+.register-card {
+    grid-template-columns: 0.8fr 1.2fr;
+}
+
+.auth-side {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 620px;
+    padding: 2.2rem;
+    color: #fff;
+    background:
+        linear-gradient(160deg, rgba(15, 23, 42, 0.96), rgba(30, 58, 138, 0.94)),
+        url("../assets/img/hero-learning-analytics.png");
+    background-size: cover;
+    background-position: center;
+}
+
+.auth-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: #fff;
+    font-weight: 800;
+}
+
+.auth-brand.dark {
+    color: var(--blue-900);
+}
+
+.auth-brand span {
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius);
+    color: #fff;
+    background: linear-gradient(135deg, var(--indigo-600), var(--emerald-500));
+}
+
+.auth-side h1,
+.register-intro h1 {
+    margin: 0.8rem 0;
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 800;
+    line-height: 1.02;
+}
+
+.auth-side p {
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.auth-footnote {
+    color: rgba(255, 255, 255, 0.74);
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    padding-top: 1rem;
+}
+
+.section-label {
+    margin: 0;
+    color: var(--emerald-500);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.auth-form-panel,
+.register-form-panel,
+.register-intro {
+    padding: clamp(1.35rem, 4vw, 2.4rem);
+}
+
+.auth-form-panel h2 {
+    margin: 0.3rem 0;
+    font-size: 1.8rem;
+    font-weight: 800;
+}
+
+.form-copy,
+.switch-link,
+.register-intro p {
+    color: var(--slate-600);
+}
+
+.form-control {
+    border-color: var(--line);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.85rem;
+}
+
+.form-control:focus {
+    border-color: var(--indigo-600);
+    box-shadow: 0 0 0 0.2rem rgba(79, 70, 229, 0.14);
+}
+
+.btn-edupredict {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: var(--blue-900);
+    --bs-btn-border-color: var(--blue-900);
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: var(--indigo-600);
+    --bs-btn-hover-border-color: var(--indigo-600);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: var(--radius);
+    padding: 0.82rem 1rem;
+    font-weight: 800;
+}
+
+.switch-link {
+    margin: 1.3rem 0 0;
+    text-align: center;
+}
+
+.register-intro {
+    background: #f8fafc;
+    border-right: 1px solid var(--line);
+}
+
+.alert {
+    border-radius: var(--radius);
+}
+
+@media (max-width: 991.98px) {
+    .auth-card,
+    .register-card {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-side {
+        min-height: 420px;
+    }
+
+    .register-intro {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+    }
+}
+
+@media (max-width: 575.98px) {
+    .auth-shell {
+        padding: 0;
+    }
+
+    .auth-card,
+    .register-card {
+        min-height: 100vh;
+        border-radius: 0;
+    }
+}
