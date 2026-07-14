@@ -629,6 +629,10 @@ button:focus-visible {
     text-transform: uppercase;
 }
 
+.section-heading.compact {
+    margin-top: 1rem;
+}
+
 .widget-panel p {
     color: var(--slate-600);
 }
@@ -676,6 +680,40 @@ button:focus-visible {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.9rem;
+}
+
+.class-management-modal {
+    --bs-modal-width: min(1120px, calc(100vw - 2rem));
+}
+
+.class-management-modal .modal-body {
+    max-height: calc(100vh - 220px);
+}
+
+.teaching-schedule-block {
+    display: grid;
+    gap: 0.85rem;
+    margin-top: 1.2rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.schedule-slot-list {
+    display: grid;
+    gap: 0.7rem;
+}
+
+.schedule-slot-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 0.8fr) minmax(180px, 1fr) auto;
+    gap: 0.7rem;
+    align-items: end;
+    padding: 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
 }
 
 .field-wide {
@@ -940,6 +978,152 @@ button:focus-visible {
     min-height: 390px;
 }
 
+.attendance-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.attendance-main {
+    min-width: 0;
+}
+
+.attendance-sheet-panel {
+    position: sticky;
+    top: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1rem;
+    background: #fff;
+    box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
+}
+
+.attendance-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.meeting-week-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.meeting-week {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.meeting-week h3 {
+    margin: 0;
+    color: var(--slate-600);
+    font-size: 0.86rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.meeting-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.meeting-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    padding: 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+}
+
+.meeting-item.active {
+    border-color: var(--indigo-600);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.meeting-item strong,
+.meeting-item span {
+    display: block;
+}
+
+.meeting-item strong {
+    color: var(--blue-950);
+    font-size: 0.95rem;
+}
+
+.meeting-item span {
+    margin-top: 0.18rem;
+    color: var(--slate-600);
+    font-size: 0.84rem;
+    font-weight: 650;
+}
+
+.meeting-item em {
+    display: inline-flex;
+    margin-left: 0.35rem;
+    color: var(--slate-500);
+    font-style: normal;
+    font-weight: 800;
+}
+
+.meeting-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    justify-content: flex-end;
+}
+
+.attendance-sheet-meta {
+    display: grid;
+    gap: 0.4rem;
+    margin: -0.2rem 0 0.9rem;
+}
+
+.attendance-sheet-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--slate-600);
+    font-size: 0.86rem;
+    font-weight: 750;
+}
+
+.attendance-sheet-meta i {
+    color: var(--indigo-600);
+}
+
+.attendance-student-list {
+    display: grid;
+    gap: 0.55rem;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.attendance-student-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 132px;
+    gap: 0.7rem;
+    align-items: center;
+    padding: 0.72rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.attendance-student-row strong,
+.attendance-student-row small {
+    display: block;
+}
+
+.attendance-student-row small {
+    margin-top: 0.12rem;
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
 .grading-settings-panel {
     display: flex;
     flex-direction: column;
@@ -1088,8 +1272,17 @@ button:focus-visible {
     .metric-grid,
     .widget-grid,
     .class-overview-grid,
+    .attendance-metrics,
     .class-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .attendance-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .attendance-sheet-panel {
+        position: static;
     }
 
     .content-grid.two-columns {
@@ -1146,6 +1339,8 @@ button:focus-visible {
     .grading-status,
     .grading-category-row,
     .grading-subcategory,
+    .schedule-slot-row,
+    .meeting-item,
     .join-box,
     .class-card-top {
         align-items: stretch;
@@ -1162,7 +1357,9 @@ button:focus-visible {
     }
 
     .grading-category-row,
-    .grading-subcategory {
+    .grading-subcategory,
+    .schedule-slot-row,
+    .attendance-student-row {
         grid-template-columns: 1fr;
     }
 

@@ -130,6 +130,66 @@ CREATE TABLE IF NOT EXISTS `class_enrollments` (
   CONSTRAINT `fk_class_enrollments_student_id` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `class_teaching_schedules` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `class_id` INT UNSIGNED NOT NULL,
+  `course_start_date` DATE NOT NULL,
+  `semester_weeks` TINYINT UNSIGNED NOT NULL DEFAULT 18,
+  `meetings_per_week` TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_class_teaching_schedules_class_id` (`class_id`),
+  CONSTRAINT `fk_class_teaching_schedules_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `class_teaching_schedule_slots` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `class_id` INT UNSIGNED NOT NULL,
+  `slot_order` TINYINT UNSIGNED NOT NULL,
+  `day_of_week` TINYINT UNSIGNED NOT NULL,
+  `meeting_type` VARCHAR(80) NOT NULL DEFAULT 'Lecture',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_class_schedule_slots_order` (`class_id`, `slot_order`),
+  KEY `idx_class_schedule_slots_class_id` (`class_id`),
+  CONSTRAINT `fk_class_schedule_slots_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `class_meetings` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `class_id` INT UNSIGNED NOT NULL,
+  `meeting_date` DATE NOT NULL,
+  `week_number` SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+  `slot_order` TINYINT UNSIGNED DEFAULT NULL,
+  `meeting_type` VARCHAR(80) NOT NULL DEFAULT 'Lecture',
+  `topic` VARCHAR(255) DEFAULT NULL,
+  `status` ENUM('regular','holiday','cancelled','review','exam') NOT NULL DEFAULT 'regular',
+  `source` ENUM('generated','manual') NOT NULL DEFAULT 'generated',
+  `is_customized` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_class_meetings_class_date` (`class_id`, `meeting_date`),
+  KEY `idx_class_meetings_status` (`status`),
+  CONSTRAINT `fk_class_meetings_class_id` FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `attendance_records` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `meeting_id` INT UNSIGNED NOT NULL,
+  `student_id` INT UNSIGNED NOT NULL,
+  `status` ENUM('present','absent','late','excused') NOT NULL DEFAULT 'present',
+  `saved_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_attendance_records_meeting_student` (`meeting_id`, `student_id`),
+  KEY `idx_attendance_records_student_id` (`student_id`),
+  CONSTRAINT `fk_attendance_records_meeting_id` FOREIGN KEY (`meeting_id`) REFERENCES `class_meetings` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_attendance_records_student_id` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `settings` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `setting_group` VARCHAR(80) NOT NULL DEFAULT 'general',

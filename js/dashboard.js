@@ -127,6 +127,84 @@
         });
     });
 
+    const weekdayOptions = [
+        ['1', 'Monday'],
+        ['2', 'Tuesday'],
+        ['3', 'Wednesday'],
+        ['4', 'Thursday'],
+        ['5', 'Friday'],
+        ['6', 'Saturday'],
+        ['7', 'Sunday'],
+    ];
+
+    const buildScheduleSlotRow = () => {
+        const row = document.createElement('div');
+        row.className = 'schedule-slot-row';
+        row.setAttribute('data-schedule-slot', '');
+        row.innerHTML = `
+            <div class="field">
+                <label class="form-label">Day of week</label>
+                <select class="form-control" name="meeting_day[]">
+                    ${weekdayOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}
+                </select>
+            </div>
+            <div class="field">
+                <label class="form-label">Meeting type</label>
+                <input type="text" class="form-control" name="meeting_type[]" value="Lecture" maxlength="80" placeholder="Lecture">
+            </div>
+            <button class="btn btn-copy btn-danger-soft" type="button" data-remove-schedule-slot aria-label="Remove meeting"><i class="bi bi-trash"></i></button>
+        `;
+
+        return row;
+    };
+
+    document.querySelectorAll('.teaching-schedule-block').forEach((block) => {
+        const list = block.querySelector('[data-schedule-slot-list]');
+        const meetingCount = block.querySelector('[data-meetings-per-week]');
+
+        const syncMeetingCount = () => {
+            if (meetingCount && list) {
+                meetingCount.value = String(list.querySelectorAll('[data-schedule-slot]').length);
+            }
+        };
+
+        block.addEventListener('click', (event) => {
+            const target = event.target.closest('button');
+
+            if (!target || !list) {
+                return;
+            }
+
+            if (target.matches('[data-add-schedule-slot]')) {
+                list.appendChild(buildScheduleSlotRow());
+                syncMeetingCount();
+            }
+
+            if (target.matches('[data-remove-schedule-slot]')) {
+                const rows = list.querySelectorAll('[data-schedule-slot]');
+
+                if (rows.length > 1) {
+                    target.closest('[data-schedule-slot]')?.remove();
+                    syncMeetingCount();
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-attendance-sheet]').forEach((form) => {
+        const markAllButton = form.querySelector('[data-mark-all-present]');
+
+        if (!markAllButton) {
+            return;
+        }
+
+        markAllButton.addEventListener('click', () => {
+            form.querySelectorAll('[data-attendance-status]').forEach((select) => {
+                select.value = 'present';
+            });
+        });
+    });
+
     const gradingForm = document.querySelector('[data-grading-settings-form]');
 
     if (gradingForm) {

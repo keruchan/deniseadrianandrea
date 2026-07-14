@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/sidebar_config.php';
 require_once __DIR__ . '/../../includes/class_management.php';
+require_once __DIR__ . '/../../includes/attendance_management.php';
 require_once __DIR__ . '/../../includes/dashboard_layout.php';
 
 require_role('instructor');
@@ -12,9 +13,12 @@ if ($instructorId === null) {
     redirect_to('pages/auth/logout.php');
 }
 
+ensure_attendance_schema($pdo);
+
 $errors = [];
 $successMessage = '';
 $formData = class_form_defaults();
+$scheduleData = attendance_schedule_defaults();
 $autoOpenModal = '';
 $editTargetClassId = 0;
 $postedAction = '';
@@ -30,6 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedAction = (string) ($_POST['class_action'] ?? 'create');
     $submittedToken = (string) ($_POST['csrf_token'] ?? '');
     $classId = (int) ($_POST['class_id'] ?? 0);
+    $meetingId = (int) ($_POST['meeting_id'] ?? 0);
+    $meetingData = [];
 
     if (!csrf_is_valid('csrf_class_manage_token', $submittedToken)) {
         $errors[] = 'Security validation failed. Please refresh the page and try again.';
@@ -38,10 +44,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($postedAction === 'create' || $postedAction === 'edit') {
         $formData = class_form_data_from_array($_POST);
         $errors = array_merge($errors, validate_class_form_data($formData));
+        $scheduleData = attendance_schedule_data_from_array($_POST);
+        $errors = array_merge($errors, validate_attendance_schedule_data($scheduleData));
     }
 
-    if (in_array($postedAction, ['edit', 'archive', 'delete'], true) && $classId <= 0) {
+    if (in_array($postedAction, ['edit', 'archive', 'delete', 'meeting_add', 'meeting_save'], true) && $classId <= 0) {
         $errors[] = 'Class selection is invalid.';
+    }
+
+    if (in_array($postedAction, ['meeting_add', 'meeting_save'], true)) {
+        $meetingData = [
+            'meeting_date' => trim((string) ($_POST['meeting_date'] ?? '')),
+            'meeting_type' => trim((string) ($_POST['meeting_type'] ?? '')),
+            'status' => (string) ($_POST['meeting_status'] ?? 'regular'),
+            'topic' => trim((string) ($_POST['topic'] ?? '')),
+        ];
+
+        if ($meetingData['meeting_date'] === '' || strtotime($meetingData['meeting_date']) === false) {
+            $errors[] = 'Meeting date is required.';
+        }
+
+        if ($meetingData['meeting_type'] === '') {
+            $errors[] = 'Meeting type is required.';
+        }
+
+        if (!isset(attendance_statuses()[$meetingData['status']])) {
+            $errors[] = 'Meeting status is invalid.';
+        }
+    }
+
+    if ($postedAction === 'meeting_save' && $meetingId <= 0) {
+        $errors[] = 'Meeting selection is invalid.';
+    }
+
+    if ($postedAction === 'attendance_save' && $meetingId <= 0) {
+        $errors[] = 'Meeting selection is invalid.';
     }
 
     if (empty($errors)) {
@@ -67,6 +104,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':term' => $formData['term'] !== '' ? $formData['term'] : null,
                     ':status' => 'active',
                 ]);
+                $newClassId = (int) $pdo->lastInsertId();
+                save_class_teaching_schedule($pdo, $newClassId, $scheduleData);
+                regenerate_class_meetings($pdo, $newClassId);
 
                 rotate_csrf_token('csrf_class_manage_token');
                 $_SESSION['class_success'] = 'Class created successfully. Students can now join using code ' . $classCode . '.';
@@ -102,6 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':class_id' => $classId,
                         ':instructor_id' => $instructorId,
                     ]);
+                    save_class_teaching_schedule($pdo, $classId, $scheduleData);
+                    regenerate_class_meetings($pdo, $classId);
 
                     rotate_csrf_token('csrf_class_manage_token');
                     $_SESSION['class_success'] = 'Class updated successfully.';
@@ -127,6 +169,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['class_success'] = 'Class deleted successfully.';
 
                     redirect_to('pages/instructor/classes.php');
+                }
+            } elseif ($postedAction === 'meeting_add') {
+                if (!instructor_class_exists($pdo, $instructorId, $classId, 'active')) {
+                    $errors[] = 'Class not found or no longer active.';
+                } else {
+                    $newMeetingId = save_class_meeting($pdo, $classId, $meetingData);
+                    rotate_csrf_token('csrf_class_manage_token');
+                    $_SESSION['class_success'] = 'Meeting added successfully.';
+
+                    redirect_to('classes/' . $classId . '/attendance?meeting_id=' . $newMeetingId);
+                }
+            } elseif ($postedAction === 'meeting_save') {
+                $meeting = meeting_belongs_to_instructor($pdo, $meetingId, $instructorId);
+
+                if (!$meeting || (int) $meeting['class_id'] !== $classId) {
+                    $errors[] = 'Meeting not found.';
+                } else {
+                    save_class_meeting($pdo, $classId, $meetingData, $meetingId);
+                    rotate_csrf_token('csrf_class_manage_token');
+                    $_SESSION['class_success'] = 'Meeting updated successfully.';
+
+                    redirect_to('classes/' . $classId . '/attendance?meeting_id=' . $meetingId);
+                }
+            } elseif ($postedAction === 'attendance_save') {
+                $meeting = meeting_belongs_to_instructor($pdo, $meetingId, $instructorId);
+
+                if (!$meeting) {
+                    $errors[] = 'Meeting not found.';
+                } else {
+                    save_attendance_records($pdo, $meetingId, $_POST['attendance'] ?? [], (int) $meeting['class_id']);
+                    rotate_csrf_token('csrf_class_manage_token');
+                    $_SESSION['class_success'] = 'Attendance saved successfully.';
+
+                    redirect_to('classes/' . (int) $meeting['class_id'] . '/attendance?meeting_id=' . $meetingId);
                 }
             } else {
                 $errors[] = 'Class action is invalid.';
@@ -236,7 +312,350 @@ if ($selectedClass !== null) {
 
 $menu = instructor_sidebar_menu($allClasses, $selectedClassId);
 
-function render_instructor_class_workspace(array $class, string $classView, array $viewMeta, string $baseJoinUrl): void
+function render_teaching_schedule_fields(array $scheduleData, string $idPrefix): void
+{
+    $weekdays = attendance_weekdays();
+    $slots = $scheduleData['slots'];
+
+    if (empty($slots)) {
+        $slots = attendance_schedule_defaults()['slots'];
+    }
+    ?>
+    <div class="teaching-schedule-block">
+        <div class="section-heading compact">
+            <h2>Teaching Schedule</h2>
+            <span>Auto-generates meetings</span>
+        </div>
+
+        <div class="form-grid">
+            <div class="field">
+                <label for="<?php echo e($idPrefix); ?>course_start_date" class="form-label">Course start date</label>
+                <input type="date" class="form-control" id="<?php echo e($idPrefix); ?>course_start_date" name="course_start_date" value="<?php echo e((string) $scheduleData['course_start_date']); ?>" required>
+            </div>
+            <div class="field">
+                <label for="<?php echo e($idPrefix); ?>semester_weeks" class="form-label">Semester length</label>
+                <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>semester_weeks" name="semester_weeks" value="<?php echo e((string) $scheduleData['semester_weeks']); ?>" min="1" max="30" step="1" required>
+            </div>
+            <div class="field">
+                <label for="<?php echo e($idPrefix); ?>meetings_per_week" class="form-label">Meetings per week</label>
+                <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>meetings_per_week" name="meetings_per_week" value="<?php echo e((string) $scheduleData['meetings_per_week']); ?>" min="1" max="7" step="1" data-meetings-per-week required>
+            </div>
+        </div>
+
+        <div class="schedule-slot-list" data-schedule-slot-list>
+            <?php foreach ($slots as $slot): ?>
+                <div class="schedule-slot-row" data-schedule-slot>
+                    <div class="field">
+                        <label class="form-label">Day of week</label>
+                        <select class="form-control" name="meeting_day[]">
+                            <?php foreach ($weekdays as $dayValue => $dayLabel): ?>
+                                <option value="<?php echo e((string) $dayValue); ?>" <?php echo (int) $slot['day_of_week'] === $dayValue ? 'selected' : ''; ?>><?php echo e($dayLabel); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label class="form-label">Meeting type</label>
+                        <input type="text" class="form-control" name="meeting_type[]" value="<?php echo e((string) $slot['meeting_type']); ?>" maxlength="80" placeholder="Lecture">
+                    </div>
+                    <button class="btn btn-copy btn-danger-soft" type="button" data-remove-schedule-slot aria-label="Remove meeting"><i class="bi bi-trash"></i></button>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <button class="btn btn-copy" type="button" data-add-schedule-slot><i class="bi bi-plus-circle"></i> Add weekly meeting</button>
+    </div>
+    <?php
+}
+
+function render_meeting_form_fields(array $meeting = []): void
+{
+    $statuses = attendance_statuses();
+    $meetingDate = (string) ($meeting['meeting_date'] ?? date('Y-m-d'));
+    $meetingType = (string) ($meeting['meeting_type'] ?? 'Lecture');
+    $meetingStatus = (string) ($meeting['status'] ?? 'regular');
+    $topic = (string) ($meeting['topic'] ?? '');
+    ?>
+    <div class="form-grid">
+        <div class="field">
+            <label class="form-label">Date</label>
+            <input type="date" class="form-control" name="meeting_date" value="<?php echo e($meetingDate); ?>" required>
+        </div>
+        <div class="field">
+            <label class="form-label">Meeting type</label>
+            <input type="text" class="form-control" name="meeting_type" value="<?php echo e($meetingType); ?>" maxlength="80" required>
+        </div>
+        <div class="field">
+            <label class="form-label">Status</label>
+            <select class="form-control" name="meeting_status">
+                <?php foreach ($statuses as $statusKey => $statusLabel): ?>
+                    <option value="<?php echo e($statusKey); ?>" <?php echo $meetingStatus === $statusKey ? 'selected' : ''; ?>><?php echo e($statusLabel); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="field field-wide">
+            <label class="form-label">Topic</label>
+            <input type="text" class="form-control" name="topic" value="<?php echo e($topic); ?>" maxlength="255" placeholder="Optional topic">
+        </div>
+    </div>
+    <?php
+}
+
+function render_attendance_workspace(PDO $pdo, int $instructorId, array $class, string $csrfToken, array $errors, string $successMessage): void
+{
+    $classId = (int) $class['id'];
+    $schedule = get_class_teaching_schedule($pdo, $classId);
+    $meetings = get_class_meetings($pdo, $classId);
+
+    if (empty($meetings)) {
+        regenerate_class_meetings($pdo, $classId);
+        $meetings = get_class_meetings($pdo, $classId);
+    }
+
+    $summary = get_attendance_summary($pdo, $classId);
+    $selectedMeetingId = (int) ($_GET['meeting_id'] ?? 0);
+    $selectedMeeting = null;
+    $meetingSelectionNotice = '';
+
+    foreach ($meetings as $meeting) {
+        if ((int) $meeting['id'] === $selectedMeetingId) {
+            $selectedMeeting = $meeting;
+            break;
+        }
+    }
+
+    if ($selectedMeeting === null && $selectedMeetingId > 0 && !empty($meetings)) {
+        $selectedMeeting = $meetings[0];
+        $meetingSelectionNotice = 'The selected meeting was refreshed. Showing the first available meeting instead.';
+    }
+
+    $students = $selectedMeeting ? get_enrolled_students_with_attendance($pdo, $classId, (int) $selectedMeeting['id']) : [];
+    $meetingsByWeek = [];
+    foreach ($meetings as $meeting) {
+        $meetingsByWeek[(int) $meeting['week_number']][] = $meeting;
+    }
+    ?>
+    <section class="attendance-layout mt-4">
+        <div class="attendance-main">
+            <?php if ($successMessage !== ''): ?>
+                <div class="alert alert-success" role="alert"><?php echo e($successMessage); ?></div>
+            <?php endif; ?>
+
+            <?php if (!empty($errors)): ?>
+                <div class="alert alert-danger" role="alert">
+                    <ul class="mb-0">
+                        <?php foreach ($errors as $error): ?>
+                            <li><?php echo e($error); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($meetingSelectionNotice !== ''): ?>
+                <div class="alert alert-warning" role="alert"><?php echo e($meetingSelectionNotice); ?></div>
+            <?php endif; ?>
+
+            <div class="metric-grid attendance-metrics">
+                <article class="metric-card tone-emerald">
+                    <div class="metric-icon"><i class="bi bi-percent"></i></div>
+                    <div>
+                        <div class="metric-label">Attendance rate</div>
+                        <div class="metric-value"><?php echo e((string) $summary['attendance_rate']); ?>%</div>
+                        <div class="metric-note">Present, late, and excused over saved records.</div>
+                    </div>
+                </article>
+                <article class="metric-card">
+                    <div class="metric-icon"><i class="bi bi-calendar2-week"></i></div>
+                    <div>
+                        <div class="metric-label">Total planned meetings</div>
+                        <div class="metric-value"><?php echo e((string) $summary['total_planned']); ?></div>
+                        <div class="metric-note"><?php echo e((string) $schedule['semester_weeks']); ?> weeks planned.</div>
+                    </div>
+                </article>
+                <article class="metric-card tone-indigo">
+                    <div class="metric-icon"><i class="bi bi-check2-square"></i></div>
+                    <div>
+                        <div class="metric-label">Counted meetings</div>
+                        <div class="metric-value"><?php echo e((string) $summary['counted']); ?></div>
+                        <div class="metric-note">Regular meetings only.</div>
+                    </div>
+                </article>
+                <article class="metric-card tone-amber">
+                    <div class="metric-icon"><i class="bi bi-check-circle"></i></div>
+                    <div>
+                        <div class="metric-label">Completed meetings</div>
+                        <div class="metric-value"><?php echo e((string) $summary['completed']); ?></div>
+                        <div class="metric-note">Regular meetings with saved sheets.</div>
+                    </div>
+                </article>
+                <article class="metric-card">
+                    <div class="metric-icon"><i class="bi bi-hourglass-split"></i></div>
+                    <div>
+                        <div class="metric-label">Remaining meetings</div>
+                        <div class="metric-value"><?php echo e((string) $summary['remaining']); ?></div>
+                        <div class="metric-note">Counted meetings still unsaved.</div>
+                    </div>
+                </article>
+            </div>
+
+            <section class="class-section mt-4">
+                <div class="section-heading">
+                    <h2>Generated Meeting Schedule</h2>
+                    <button class="btn btn-edupredict" type="button" data-bs-toggle="modal" data-bs-target="#addMeetingModal">
+                        <i class="bi bi-plus-circle"></i> Add meeting
+                    </button>
+                </div>
+
+                <?php if (empty($meetingsByWeek)): ?>
+                    <div class="empty-state large">
+                        <i class="bi bi-calendar2-week"></i>
+                        <span>No meetings generated yet. Update the teaching schedule to generate planned meetings.</span>
+                    </div>
+                <?php else: ?>
+                    <div class="meeting-week-list">
+                        <?php foreach ($meetingsByWeek as $weekNumber => $weekMeetings): ?>
+                            <div class="meeting-week">
+                                <h3>Week <?php echo e((string) $weekNumber); ?></h3>
+                                <div class="meeting-list">
+                                    <?php foreach ($weekMeetings as $meeting): ?>
+                                        <?php
+                                        $isSelected = $selectedMeeting && (int) $selectedMeeting['id'] === (int) $meeting['id'];
+                                        $dateLabel = date('M j', strtotime((string) $meeting['meeting_date']));
+                                        $statusLabel = attendance_statuses()[$meeting['status']] ?? 'Regular';
+                                        $sheetSaved = (int) $meeting['record_count'] > 0;
+                                        ?>
+                                        <article class="meeting-item <?php echo $isSelected ? 'active' : ''; ?>">
+                                            <div>
+                                                <strong><?php echo e($dateLabel); ?> &bull; <?php echo e($meeting['meeting_type']); ?></strong>
+                                                <span>
+                                                    <?php echo e($statusLabel); ?><?php echo !empty($meeting['topic']) ? ' &middot; ' . e($meeting['topic']) : ''; ?>
+                                                    <em><?php echo $sheetSaved ? 'Sheet saved' : 'No sheet yet'; ?></em>
+                                                </span>
+                                            </div>
+                                            <div class="meeting-actions">
+                                                <a class="btn btn-copy" href="<?php echo e(instructor_class_route($classId, 'attendance') . '?meeting_id=' . (int) $meeting['id']); ?>"><i class="bi bi-card-checklist"></i> Sheet</a>
+                                                <button class="btn btn-copy" type="button" data-bs-toggle="modal" data-bs-target="#editMeetingModal-<?php echo e((string) $meeting['id']); ?>"><i class="bi bi-pencil-square"></i> Edit</button>
+                                            </div>
+                                        </article>
+
+                                        <div class="modal fade" id="editMeetingModal-<?php echo e((string) $meeting['id']); ?>" tabindex="-1" aria-labelledby="editMeetingModalLabel-<?php echo e((string) $meeting['id']); ?>" aria-hidden="true">
+                                            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                                                <div class="modal-content">
+                                                    <div class="modal-header">
+                                                        <div>
+                                                            <h2 class="modal-title h5" id="editMeetingModalLabel-<?php echo e((string) $meeting['id']); ?>">Edit Meeting</h2>
+                                                            <p class="mb-0 text-secondary small">Changes affect this meeting only and keep existing attendance records attached.</p>
+                                                        </div>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <form method="post" action="<?php echo e(instructor_class_route($classId, 'attendance') . '?meeting_id=' . (int) $meeting['id']); ?>" novalidate>
+                                                        <div class="modal-body">
+                                                            <input type="hidden" name="csrf_token" value="<?php echo e($csrfToken); ?>">
+                                                            <input type="hidden" name="class_action" value="meeting_save">
+                                                            <input type="hidden" name="class_id" value="<?php echo e((string) $classId); ?>">
+                                                            <input type="hidden" name="meeting_id" value="<?php echo e((string) $meeting['id']); ?>">
+                                                            <?php render_meeting_form_fields($meeting); ?>
+                                                        </div>
+                                                        <div class="modal-footer">
+                                                            <button type="button" class="btn btn-copy" data-bs-dismiss="modal">Cancel</button>
+                                                            <button type="submit" class="btn btn-edupredict"><i class="bi bi-check2-circle"></i> Save meeting</button>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+        </div>
+
+        <aside class="attendance-sheet-panel">
+            <?php if (!$selectedMeeting): ?>
+                <div class="section-heading">
+                    <h2>Attendance Sheet</h2>
+                    <span>Select meeting</span>
+                </div>
+                <div class="empty-state large">
+                    <i class="bi bi-card-checklist"></i>
+                    <span>Select a meeting to take attendance.</span>
+                </div>
+            <?php else: ?>
+                <div class="section-heading">
+                    <h2><?php echo e(date('M j, Y', strtotime((string) $selectedMeeting['meeting_date']))); ?></h2>
+                    <span><?php echo e($selectedMeeting['meeting_type']); ?></span>
+                </div>
+                <div class="attendance-sheet-meta">
+                    <span><i class="bi bi-tag"></i><?php echo e(attendance_statuses()[$selectedMeeting['status']] ?? 'Regular'); ?></span>
+                    <span><i class="bi bi-journal-text"></i><?php echo e($selectedMeeting['topic'] ?: 'No topic'); ?></span>
+                </div>
+                <form method="post" action="<?php echo e(instructor_class_route($classId, 'attendance') . '?meeting_id=' . (int) $selectedMeeting['id']); ?>" data-attendance-sheet>
+                    <input type="hidden" name="csrf_token" value="<?php echo e($csrfToken); ?>">
+                    <input type="hidden" name="class_action" value="attendance_save">
+                    <input type="hidden" name="class_id" value="<?php echo e((string) $classId); ?>">
+                    <input type="hidden" name="meeting_id" value="<?php echo e((string) $selectedMeeting['id']); ?>">
+
+                    <button class="btn btn-copy w-100 mb-3" type="button" data-mark-all-present><i class="bi bi-check2-all"></i> Mark all present</button>
+
+                    <?php if (empty($students)): ?>
+                        <div class="empty-state large">
+                            <i class="bi bi-people"></i>
+                            <span>No enrolled students yet.</span>
+                        </div>
+                    <?php else: ?>
+                        <div class="attendance-student-list">
+                            <?php foreach ($students as $student): ?>
+                                <label class="attendance-student-row">
+                                    <span>
+                                        <strong><?php echo e($student['student_name']); ?></strong>
+                                        <small><?php echo e($student['student_no'] ?: 'No student number'); ?></small>
+                                    </span>
+                                    <select class="form-control" name="attendance[<?php echo e((string) $student['id']); ?>]" data-attendance-status>
+                                        <?php foreach (attendance_record_statuses() as $statusKey => $statusLabel): ?>
+                                            <option value="<?php echo e($statusKey); ?>" <?php echo $student['attendance_status'] === $statusKey ? 'selected' : ''; ?>><?php echo e($statusLabel); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <button class="btn btn-edupredict w-100 mt-3" type="submit"><i class="bi bi-save"></i> Save attendance</button>
+                    <?php endif; ?>
+                </form>
+            <?php endif; ?>
+        </aside>
+    </section>
+
+    <div class="modal fade" id="addMeetingModal" tabindex="-1" aria-labelledby="addMeetingModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h2 class="modal-title h5" id="addMeetingModalLabel">Add Meeting</h2>
+                        <p class="mb-0 text-secondary small">Extra meetings are added without changing the generated teaching schedule.</p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="post" action="<?php echo e(instructor_class_route($classId, 'attendance')); ?>" novalidate>
+                    <div class="modal-body">
+                        <input type="hidden" name="csrf_token" value="<?php echo e($csrfToken); ?>">
+                        <input type="hidden" name="class_action" value="meeting_add">
+                        <input type="hidden" name="class_id" value="<?php echo e((string) $classId); ?>">
+                        <?php render_meeting_form_fields(); ?>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-copy" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-edupredict"><i class="bi bi-plus-circle"></i> Add meeting</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php
+}
+
+function render_instructor_class_workspace(array $class, string $classView, array $viewMeta, string $baseJoinUrl, PDO $pdo, int $instructorId, string $csrfToken, array $errors, string $successMessage): void
 {
     $classId = (int) $class['id'];
     $joinLink = $baseJoinUrl . urlencode((string) $class['class_code']);
@@ -262,7 +681,9 @@ function render_instructor_class_workspace(array $class, string $classView, arra
             <span><i class="bi bi-circle-fill"></i><?php echo e($class['status']); ?></span>
         </div>
 
-        <?php if ($classView === 'overview'): ?>
+        <?php if ($classView === 'attendance'): ?>
+            <?php render_attendance_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage); ?>
+        <?php elseif ($classView === 'overview'): ?>
             <div class="metric-grid class-overview-grid mt-4">
                 <article class="metric-card tone-indigo">
                     <div class="metric-icon"><i class="bi bi-door-open"></i></div>
@@ -355,10 +776,10 @@ render_dashboard_page([
     'description' => $pageDescription,
     'active_route' => $activeRoute,
     'menu' => $menu,
-    'content' => function () use ($errors, $successMessage, $formData, $csrfToken, $classes, $allClasses, $baseJoinUrl, $selectedClass, $classView, $classViewMeta, $searchTerm, $autoOpenModal, $postedAction, $editTargetClassId) {
+    'content' => function () use ($pdo, $instructorId, $errors, $successMessage, $formData, $scheduleData, $csrfToken, $classes, $allClasses, $baseJoinUrl, $selectedClass, $classView, $classViewMeta, $searchTerm, $autoOpenModal, $postedAction, $editTargetClassId) {
         ?>
         <?php if ($selectedClass !== null): ?>
-            <?php render_instructor_class_workspace($selectedClass, $classView, $classViewMeta, $baseJoinUrl); ?>
+            <?php render_instructor_class_workspace($selectedClass, $classView, $classViewMeta, $baseJoinUrl, $pdo, $instructorId, $csrfToken, $errors, $successMessage); ?>
             <?php return; ?>
         <?php endif; ?>
 
@@ -483,9 +904,14 @@ render_dashboard_page([
                         if ($postedAction === 'edit' && $editTargetClassId === $classId && !empty($errors)) {
                             $editFormData = $formData;
                         }
+
+                        $editScheduleData = get_class_teaching_schedule($pdo, $classId);
+                        if ($postedAction === 'edit' && $editTargetClassId === $classId && !empty($errors)) {
+                            $editScheduleData = $scheduleData;
+                        }
                         ?>
                         <div class="modal fade" id="editClassModal-<?php echo e((string) $classId); ?>" tabindex="-1" aria-labelledby="editClassModalLabel-<?php echo e((string) $classId); ?>" aria-hidden="true">
-                            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-dialog modal-xl modal-dialog-scrollable class-management-modal">
                                 <div class="modal-content">
                                     <div class="modal-header">
                                         <div>
@@ -546,6 +972,8 @@ render_dashboard_page([
                                                     <textarea class="form-control" id="edit_description_<?php echo e((string) $classId); ?>" name="description" rows="4" maxlength="1000"><?php echo e($editFormData['description']); ?></textarea>
                                                 </div>
                                             </div>
+
+                                            <?php render_teaching_schedule_fields($editScheduleData, 'edit_' . $classId . '_'); ?>
                                         </div>
 
                                         <div class="modal-footer">
@@ -562,7 +990,7 @@ render_dashboard_page([
         </section>
 
         <div class="modal fade" id="createClassModal" tabindex="-1" aria-labelledby="createClassModalLabel" aria-hidden="true">
-            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable class-management-modal">
                 <div class="modal-content">
                     <div class="modal-header">
                         <div>
@@ -622,6 +1050,8 @@ render_dashboard_page([
                                     <textarea class="form-control" id="description" name="description" rows="4" maxlength="1000" placeholder="Optional class notes for students"><?php echo e($formData['description']); ?></textarea>
                                 </div>
                             </div>
+
+                            <?php render_teaching_schedule_fields($scheduleData, 'create_'); ?>
                         </div>
 
                         <div class="modal-footer">
