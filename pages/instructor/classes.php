@@ -102,7 +102,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Item title is required and must not exceed 150 characters.';
         }
 
-        if ($assessmentItemDate !== '' && strtotime($assessmentItemDate) === false) {
+        // Title, Date, and Maximum Score are all required to complete setup (is_assessment_item_gradeable
+        // checks all three). Date previously only rejected malformed values, silently accepting a blank
+        // one -- letting a save "succeed" while leaving the item stuck on "Needs setup" with no error
+        // explaining why. It must be validated the same way Title and Max score already are: required.
+        if ($assessmentItemDate === '') {
+            $errors[] = 'Item date is required.';
+        } elseif (strtotime($assessmentItemDate) === false) {
             $errors[] = 'Item date is invalid.';
         }
 
@@ -1829,7 +1835,7 @@ function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array
                             </div>
                             <div class="field">
                                 <label class="form-label">Date</label>
-                                <input type="date" class="form-control" name="item_date" value="<?php echo e((string) ($item['scheduled_date'] ?? '')); ?>">
+                                <input type="date" class="form-control" name="item_date" value="<?php echo e((string) ($item['scheduled_date'] ?? '')); ?>" required>
                             </div>
                             <div class="field">
                                 <label class="form-label">Max score</label>

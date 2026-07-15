@@ -2223,6 +2223,27 @@ button:focus-visible {
     .student-overview-rate {
         justify-items: start;
     }
+
+    /* Prevent iOS Safari from auto-zooming when a control smaller than 16px is
+       focused. Only affects touch/phone widths; desktop sizing is unchanged. */
+    .form-control,
+    .attendance-status-select,
+    input,
+    select,
+    textarea {
+        font-size: 16px;
+    }
+
+    /* Comfortable touch targets on phones. */
+    .btn-icon {
+        width: 44px;
+        height: 44px;
+    }
+
+    /* Belt-and-suspenders: never allow accidental horizontal page scroll on phones. */
+    .main {
+        overflow-x: hidden;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {

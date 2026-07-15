@@ -1,5 +1,4 @@
 RewriteEngine On
-RewriteBase /EDUPREDICT/
 
 RewriteRule ^classes/?$ pages/instructor/classes.php [L,QSA]
 RewriteRule ^classes/archived/?$ pages/instructor/archived-classes.php [L,QSA]

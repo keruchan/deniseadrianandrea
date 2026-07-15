@@ -42,7 +42,7 @@ if (DISPLAY_ERRORS) {
 // Update this if the project folder is renamed under htdocs.
 define('APP_BASE_PATH', '/EDUPREDICT');
 
-define('DB_HOST', '127.0.0.1');
+define('DB_HOST', 'localhost');
 define('DB_NAME', 'edupredict_db');
 define('DB_USER', 'root');
 define('DB_PASS', '');

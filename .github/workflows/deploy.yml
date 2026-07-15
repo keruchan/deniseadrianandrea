@@ -1,0 +1,25 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SFTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          protocol: sftp
+          port: ${{ secrets.PORT }}
+          local-dir: ./
+          server-dir: /domains/ccsbsis.com/public_html/edutrack/
