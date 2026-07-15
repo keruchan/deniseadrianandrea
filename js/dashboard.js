@@ -655,6 +655,137 @@
         });
     });
 
+    // Live grouping editor: group/grouping names, leaders, and student assignments
+    // persist instantly via AJAX (no submit button). Used by the class Groupings
+    // module and activity-specific groupings alike.
+    document.querySelectorAll('[data-grouping-editor]').forEach((editor) => {
+        const groupingId = editor.getAttribute('data-grouping-id');
+        const csrf = editor.getAttribute('data-csrf');
+        const ajaxUrl = editor.getAttribute('data-ajax-url');
+
+        const post = (params) => {
+            const body = new URLSearchParams(Object.assign({ csrf_token: csrf }, params));
+            return fetch(ajaxUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+            }).then((response) => response.json().catch(() => ({ ok: false, error: 'Unexpected response.' })));
+        };
+
+        const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+        ));
+
+        // Transient "Saved" toast.
+        const toast = document.createElement('div');
+        toast.className = 'grouping-toast';
+        toast.setAttribute('role', 'status');
+        toast.hidden = true;
+        editor.appendChild(toast);
+        let toastTimer = null;
+        const showToast = (message, ok) => {
+            toast.textContent = message;
+            toast.classList.toggle('is-error', !ok);
+            toast.hidden = false;
+            // reflow so the transition replays
+            void toast.offsetWidth;
+            toast.classList.add('is-visible');
+            window.clearTimeout(toastTimer);
+            toastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 1600);
+        };
+
+        // Re-render each group card's member pills + leader options from the server snapshot.
+        const renderGroups = (groups) => {
+            groups.forEach((group) => {
+                const card = editor.querySelector('[data-group-card][data-group-id="' + group.id + '"]');
+                if (!card) {
+                    return;
+                }
+
+                const membersEl = card.querySelector('[data-group-members]');
+                if (membersEl) {
+                    membersEl.innerHTML = group.members.length
+                        ? group.members.map((m) => '<span class="status-pill small tone-slate">' + escapeHtml(m.name) + '</span>').join('')
+                        : '<span class="text-secondary small" data-empty-members>No members yet &mdash; assign below.</span>';
+                }
+
+                const leaderSel = card.querySelector('[data-group-leader]');
+                if (leaderSel) {
+                    const current = String(group.leader || 0);
+                    leaderSel.innerHTML = '<option value="0">No leader</option>'
+                        + group.members.map((m) => '<option value="' + m.id + '"' + (String(m.id) === current ? ' selected' : '') + '>' + escapeHtml(m.name) + '</option>').join('');
+                }
+            });
+        };
+
+        const groupingNameInput = editor.querySelector('[data-grouping-rename]');
+        if (groupingNameInput) {
+            groupingNameInput.addEventListener('change', () => {
+                const name = groupingNameInput.value.trim();
+                if (name === '') {
+                    showToast('Grouping name is required.', false);
+                    return;
+                }
+                post({ action: 'rename_grouping', grouping_id: groupingId, name }).then((res) => {
+                    showToast(res.ok ? 'Saved' : (res.error || 'Could not save.'), res.ok);
+                });
+            });
+        }
+
+        editor.querySelectorAll('[data-group-rename]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const card = input.closest('[data-group-card]');
+                const gid = card.getAttribute('data-group-id');
+                const name = input.value.trim();
+                post({ action: 'rename_group', group_id: gid, name }).then((res) => {
+                    showToast(res.ok ? 'Saved' : (res.error || 'Could not save.'), res.ok);
+                    if (res.ok && name !== '') {
+                        editor.querySelectorAll('[data-assign-student] option[value="' + gid + '"]').forEach((opt) => {
+                            opt.textContent = name;
+                        });
+                    }
+                });
+            });
+        });
+
+        editor.querySelectorAll('[data-group-leader]').forEach((sel) => {
+            sel.addEventListener('change', () => {
+                const card = sel.closest('[data-group-card]');
+                const gid = card.getAttribute('data-group-id');
+                post({ action: 'set_leader', group_id: gid, student_id: sel.value }).then((res) => {
+                    showToast(res.ok ? 'Saved' : (res.error || 'Could not save.'), res.ok);
+                });
+            });
+        });
+
+        editor.querySelectorAll('[data-assign-student]').forEach((sel) => {
+            sel.setAttribute('data-prev', sel.value);
+            sel.addEventListener('change', () => {
+                const studentId = sel.getAttribute('data-assign-student');
+                const groupId = sel.value;
+                const previous = sel.getAttribute('data-prev') || '0';
+
+                post({ action: 'assign_member', grouping_id: groupingId, student_id: studentId, group_id: groupId })
+                    .then((res) => {
+                        if (res.ok) {
+                            sel.setAttribute('data-prev', groupId);
+                            if (res.groups) {
+                                renderGroups(res.groups);
+                            }
+                            showToast('Saved', true);
+                        } else {
+                            sel.value = previous;
+                            showToast(res.error || 'Could not save.', false);
+                        }
+                    })
+                    .catch(() => {
+                        sel.value = previous;
+                        showToast('Network error.', false);
+                    });
+            });
+        });
+    });
+
     const gradingForm = document.querySelector('[data-grading-settings-form]');
 
     if (gradingForm) {

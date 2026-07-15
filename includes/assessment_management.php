@@ -45,14 +45,20 @@ function format_score($value): string
 }
 
 /**
- * An item can be graded only once its required setup is complete:
- * a title, a scheduled date, and a positive maximum score.
+ * An item can be graded only once its required setup is complete: a title, a
+ * scheduled date, a positive maximum score, and -- for Group Activities -- a
+ * grouping actually assigned. (Activity Type itself is always set on the row,
+ * defaulting to "individual", so there's nothing further to check for it here.)
  */
 function is_assessment_item_gradeable(array $item): bool
 {
+    $isGroupActivity = (string) ($item['type'] ?? '') === 'activity'
+        && (string) ($item['activity_mode'] ?? 'individual') === 'group';
+
     return trim((string) ($item['title'] ?? '')) !== ''
         && !empty($item['scheduled_date'])
-        && (float) ($item['max_score'] ?? 0) > 0;
+        && (float) ($item['max_score'] ?? 0) > 0
+        && (!$isGroupActivity || !empty($item['grouping_id']));
 }
 
 function ensure_assessment_schema(PDO $pdo): void
@@ -227,6 +233,76 @@ function sync_assessment_items(PDO $pdo, int $classId, string $type, int $total)
     }
 
     return ['added' => $added, 'removed' => $removed, 'kept_graded' => $keptGraded];
+}
+
+function assessment_default_title(string $type, int $position): string
+{
+    return assessment_types()[$type]['label'] . ' ' . $position;
+}
+
+/**
+ * Appends a new item after the last position with default title/max score, and
+ * keeps the configured total in sync. Returns the new item id.
+ */
+function add_assessment_item(PDO $pdo, int $classId, string $type): int
+{
+    $posStmt = $pdo->prepare('SELECT COALESCE(MAX(position), 0) FROM class_assessment_items WHERE class_id = :c AND type = :t');
+    $posStmt->execute([':c' => $classId, ':t' => $type]);
+    $position = (int) $posStmt->fetchColumn() + 1;
+
+    $ins = $pdo->prepare(
+        'INSERT INTO class_assessment_items (class_id, type, position, title, max_score)
+         VALUES (:c, :t, :p, :title, :max)'
+    );
+    $ins->execute([
+        ':c' => $classId,
+        ':t' => $type,
+        ':p' => $position,
+        ':title' => assessment_default_title($type, $position),
+        ':max' => assessment_default_max($type),
+    ]);
+    $newId = (int) $pdo->lastInsertId();
+
+    $count = (int) $pdo->query('SELECT COUNT(*) FROM class_assessment_items WHERE class_id = ' . (int) $classId . ' AND type = ' . $pdo->quote($type))->fetchColumn();
+    save_assessment_total($pdo, $classId, $type, $count);
+
+    return $newId;
+}
+
+function delete_assessment_item(PDO $pdo, int $itemId): void
+{
+    // Scores cascade via the class_assessment_scores foreign key.
+    $pdo->prepare('DELETE FROM class_assessment_items WHERE id = :id')->execute([':id' => $itemId]);
+}
+
+/**
+ * Compacts item positions to a contiguous 1..N and renumbers only items that
+ * still carry the auto-generated default label ("Activity 3" -> "Activity 2"),
+ * leaving instructor-renamed items untouched. Positions and titles change only;
+ * item ids (and therefore recorded scores) are preserved. Keeps the configured
+ * total in sync with the actual item count.
+ */
+function resequence_assessment_items(PDO $pdo, int $classId, string $type): void
+{
+    $items = get_assessment_items($pdo, $classId, $type); // ordered by position
+    $label = assessment_types()[$type]['label'];
+    $upd = $pdo->prepare('UPDATE class_assessment_items SET position = :p, title = :title WHERE id = :id');
+
+    $newPos = 1;
+    foreach ($items as $item) {
+        $oldPos = (int) $item['position'];
+        $title = (string) $item['title'];
+
+        // Only rewrite the label if it's still the default one for the old position.
+        if ($title === $label . ' ' . $oldPos) {
+            $title = $label . ' ' . $newPos;
+        }
+
+        $upd->execute([':p' => $newPos, ':title' => $title, ':id' => (int) $item['id']]);
+        $newPos++;
+    }
+
+    save_assessment_total($pdo, $classId, $type, count($items));
 }
 
 function get_assessment_items(PDO $pdo, int $classId, string $type): array

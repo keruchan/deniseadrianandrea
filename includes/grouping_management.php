@@ -386,6 +386,106 @@ function delete_grouping(PDO $pdo, int $groupingId): void
 }
 
 /**
+ * Confirms a group row belongs to a grouping owned by the instructor.
+ * Returns [group_id, grouping_id, class_id, scope, item_id] or null.
+ */
+function grouping_group_belongs_to_instructor(PDO $pdo, int $groupId, int $instructorId): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT g.id AS group_id, g.grouping_id, cg.class_id, cg.scope, cg.item_id
+         FROM class_grouping_groups g
+         INNER JOIN class_groupings cg ON cg.id = g.grouping_id
+         INNER JOIN classes c ON c.id = cg.class_id
+         WHERE g.id = :group_id AND c.instructor_id = :instructor_id
+         LIMIT 1'
+    );
+    $stmt->execute([':group_id' => $groupId, ':instructor_id' => $instructorId]);
+    $row = $stmt->fetch();
+
+    return $row ?: null;
+}
+
+/**
+ * Moves a student to a group within a grouping (groupId = 0 unassigns).
+ * The student is first removed from every group in the grouping, and if they
+ * were a group's leader that leadership is cleared. Idempotent.
+ */
+function assign_student_to_group(PDO $pdo, int $groupingId, int $studentId, int $groupId): void
+{
+    $groupsStmt = $pdo->prepare('SELECT id FROM class_grouping_groups WHERE grouping_id = :gid');
+    $groupsStmt->execute([':gid' => $groupingId]);
+    $groupIds = array_map('intval', $groupsStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    if (empty($groupIds)) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
+    $del = $pdo->prepare("DELETE FROM class_grouping_members WHERE student_id = ? AND group_id IN ($placeholders)");
+    $del->execute(array_merge([$studentId], $groupIds));
+
+    $clearLeader = $pdo->prepare('UPDATE class_grouping_groups SET leader_student_id = NULL WHERE grouping_id = :gid AND leader_student_id = :sid');
+    $clearLeader->execute([':gid' => $groupingId, ':sid' => $studentId]);
+
+    if ($groupId > 0 && in_array($groupId, $groupIds, true)) {
+        $ins = $pdo->prepare('INSERT IGNORE INTO class_grouping_members (group_id, student_id) VALUES (:gid, :sid)');
+        $ins->execute([':gid' => $groupId, ':sid' => $studentId]);
+    }
+}
+
+function rename_grouping_group(PDO $pdo, int $groupId, string $name): void
+{
+    $name = trim($name);
+    if ($name === '') {
+        return;
+    }
+    $pdo->prepare('UPDATE class_grouping_groups SET name = :name WHERE id = :gid')
+        ->execute([':name' => mb_substr($name, 0, 150), ':gid' => $groupId]);
+}
+
+/**
+ * Sets a group's leader, but only if the student is a member of that group;
+ * otherwise clears the leader.
+ */
+function set_group_leader(PDO $pdo, int $groupId, int $studentId): void
+{
+    if ($studentId > 0) {
+        $chk = $pdo->prepare('SELECT COUNT(*) FROM class_grouping_members WHERE group_id = :gid AND student_id = :sid');
+        $chk->execute([':gid' => $groupId, ':sid' => $studentId]);
+        if ((int) $chk->fetchColumn() === 0) {
+            $studentId = 0;
+        }
+    }
+    $pdo->prepare('UPDATE class_grouping_groups SET leader_student_id = :leader WHERE id = :gid')
+        ->execute([':leader' => $studentId > 0 ? $studentId : null, ':gid' => $groupId]);
+}
+
+/**
+ * Lightweight JSON-friendly snapshot of a grouping's groups + members, used by
+ * the live editor to re-render after an instant assignment.
+ */
+function grouping_groups_payload(PDO $pdo, int $groupingId): array
+{
+    $groups = get_grouping_with_groups($pdo, $groupingId);
+    $out = [];
+
+    foreach ($groups as $group) {
+        $members = [];
+        foreach ($group['members'] as $member) {
+            $members[] = ['id' => (int) $member['student_id'], 'name' => (string) $member['student_name']];
+        }
+        $out[] = [
+            'id' => (int) $group['id'],
+            'name' => (string) $group['name'],
+            'leader' => (int) ($group['leader_student_id'] ?? 0),
+            'members' => $members,
+        ];
+    }
+
+    return $out;
+}
+
+/**
  * Removes activity-specific groupings tied to an item except the one to keep.
  * Called after (re)assigning an item's grouping so replaced activity-specific
  * groupings don't accumulate. Never touches class-scoped groupings.

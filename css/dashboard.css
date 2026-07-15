@@ -772,6 +772,13 @@ button:focus-visible {
     box-shadow: 0 0 0 0.2rem rgba(79, 70, 229, 0.14);
 }
 
+.field-error {
+    margin-top: 0.35rem;
+    color: #be123c;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
 .field-note {
     margin: 0.65rem 0 0;
     color: var(--slate-600);
@@ -1177,6 +1184,7 @@ button:focus-visible {
 .meeting-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.45rem;
     justify-content: flex-end;
 }
@@ -1923,6 +1931,39 @@ button:focus-visible {
     flex-wrap: wrap;
     gap: 0.35rem;
     margin-top: 0.35rem;
+}
+
+/* Leader accent + live-editor "Saved" toast */
+.group-leader-badge i,
+.group-leader-icon {
+    color: var(--amber-500);
+}
+
+.grouping-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.35rem;
+    z-index: 2000;
+    padding: 0.55rem 1.05rem;
+    border-radius: 999px;
+    background: var(--blue-950);
+    color: #fff;
+    font-size: 0.84rem;
+    font-weight: 800;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, 0.6rem);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.grouping-toast.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.grouping-toast.is-error {
+    background: #be123c;
 }
 
 .assessment-mode-block,
