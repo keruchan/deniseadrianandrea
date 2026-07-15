@@ -40,12 +40,12 @@ if (DISPLAY_ERRORS) {
 }
 
 // Update this if the project folder is renamed under htdocs.
-define('APP_BASE_PATH', '/EDUPREDICT');
+define('APP_BASE_PATH', '');
 
 define('DB_HOST', 'localhost');
-define('DB_NAME', 'edupredict_db');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_NAME', 'u763192172_edutrack');
+define('DB_USER', 'u763192172_edutr');
+define('DB_PASS', 'Romulorioqui44!');
 define('DB_CHARSET', 'utf8mb4');
 
 $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
