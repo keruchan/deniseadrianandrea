@@ -518,6 +518,35 @@ button:focus-visible {
     text-transform: capitalize;
 }
 
+.status-pill.tone-emerald,
+.status-pill.status-present {
+    color: #047857;
+    background: var(--emerald-100);
+}
+
+.status-pill.tone-amber,
+.status-pill.status-late {
+    color: #b45309;
+    background: var(--amber-100);
+}
+
+.status-pill.tone-rose,
+.status-pill.status-absent {
+    color: #be123c;
+    background: #ffe4e6;
+}
+
+.status-pill.tone-slate,
+.status-pill.status-excused {
+    color: var(--slate-600);
+    background: var(--slate-100);
+}
+
+.status-pill.status-excused {
+    color: var(--indigo-600);
+    background: #e0e7ff;
+}
+
 .metric-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -688,6 +717,11 @@ button:focus-visible {
 
 .class-management-modal .modal-body {
     max-height: calc(100vh - 220px);
+}
+
+.assessment-item-modal .modal-body {
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
 }
 
 .teaching-schedule-block {
@@ -939,6 +973,78 @@ button:focus-visible {
     font-weight: 650;
 }
 
+.class-context-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+
+/* Activities & Quizzes configuration */
+.assessment-config-state {
+    display: grid;
+    justify-items: center;
+    gap: 0.65rem;
+    padding: 2.5rem 1.5rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+    text-align: center;
+}
+
+.assessment-config-state > i {
+    font-size: 2.4rem;
+    color: var(--indigo-600);
+}
+
+.assessment-config-state h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--blue-950);
+}
+
+.assessment-config-state p {
+    max-width: 520px;
+    margin: 0;
+    color: var(--slate-600);
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+.assessment-config-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    width: 100%;
+    max-width: 380px;
+    margin-top: 0.35rem;
+}
+
+.assessment-config-form .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.assessment-config-form .btn {
+    white-space: nowrap;
+}
+
+.btn-link-inline {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--indigo-600);
+    font-weight: 800;
+    font-size: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.btn-link-inline:hover {
+    color: var(--blue-900);
+}
+
 .class-context-meta {
     display: flex;
     flex-wrap: wrap;
@@ -1102,6 +1208,7 @@ button:focus-visible {
     padding-right: 0.15rem;
 }
 
+/* Matches the participation sheet row orientation: identity left, single control right. */
 .attendance-student-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 132px;
@@ -1113,15 +1220,730 @@ button:focus-visible {
     background: #f8fafc;
 }
 
-.attendance-student-row strong,
-.attendance-student-row small {
-    display: block;
+.attendance-student-identity {
+    min-width: 0;
 }
 
-.attendance-student-row small {
+.attendance-student-identity strong {
+    display: block;
+    color: var(--blue-950);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.attendance-student-identity small {
+    display: block;
     margin-top: 0.12rem;
     color: var(--slate-500);
     font-weight: 700;
+}
+
+/* Single status selector styled as a colored status control (keeps the palette). */
+.attendance-status-select {
+    width: 100%;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    padding: 0.42rem 1.7rem 0.42rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.attendance-status-select.status-present {
+    border-color: var(--emerald-500);
+    background-color: var(--emerald-100);
+    color: #047857;
+}
+
+.attendance-status-select.status-absent {
+    border-color: var(--rose-500);
+    background-color: #ffe4e6;
+    color: #be123c;
+}
+
+.attendance-status-select.status-late {
+    border-color: var(--amber-500);
+    background-color: var(--amber-100);
+    color: #b45309;
+}
+
+.attendance-status-select.status-excused {
+    border-color: var(--indigo-600);
+    background-color: #e0e7ff;
+    color: var(--indigo-600);
+}
+
+.attendance-status-select:focus {
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.meeting-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.meeting-status-badge.is-completed {
+    color: #047857;
+    background: var(--emerald-100);
+}
+
+.meeting-status-badge.is-pending {
+    color: #b45309;
+    background: var(--amber-100);
+}
+
+.meeting-status-badge.is-upcoming {
+    color: var(--indigo-600);
+    background: #e0e7ff;
+}
+
+.meeting-status-badge.is-holiday,
+.meeting-status-badge.is-cancelled {
+    color: var(--slate-600);
+    background: var(--slate-100);
+}
+
+.meeting-item.is-inactive {
+    opacity: 0.65;
+}
+
+.meeting-week-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+}
+
+.meeting-week-range-label {
+    color: var(--slate-500);
+    font-size: 0.8rem;
+    font-weight: 750;
+    text-align: center;
+}
+
+.meeting-week-nav button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.meeting-week.is-hidden {
+    display: none;
+}
+
+.current-week-flag {
+    display: inline-flex;
+    margin-left: 0.4rem;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    background: var(--indigo-600);
+    color: #fff;
+    font-size: 0.63rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+.attention-panel {
+    margin-top: 1rem;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius);
+    background: #fffbeb;
+    overflow: hidden;
+}
+
+.attention-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    color: #92400e;
+    font-weight: 800;
+    font-size: 0.86rem;
+    border-bottom: 1px solid #fde68a;
+}
+
+.attention-list {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+}
+
+.attention-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    text-decoration: none;
+    color: var(--blue-950);
+}
+
+.attention-item:hover {
+    border-color: var(--amber-500);
+    background: var(--amber-100);
+}
+
+.attention-item strong {
+    display: block;
+    font-size: 0.9rem;
+}
+
+.attention-item em {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--slate-600);
+    font-style: normal;
+    font-size: 0.78rem;
+    font-weight: 650;
+}
+
+.student-attendance-panel {
+    display: none;
+}
+
+.student-attendance-panel.is-active {
+    display: block;
+}
+
+.student-overview-list {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.student-overview-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    text-align: left;
+    color: var(--blue-950);
+}
+
+.student-overview-row:hover {
+    border-color: var(--indigo-600);
+    background: #f5f6ff;
+}
+
+.student-overview-identity {
+    display: grid;
+}
+
+.student-overview-identity small {
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.student-overview-rate {
+    display: grid;
+    justify-items: end;
+    gap: 0.2rem;
+}
+
+.student-overview-rate small {
+    color: var(--slate-500);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.student-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.85rem;
+    margin-bottom: 0.85rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.student-detail-header strong {
+    display: block;
+    font-size: 1.05rem;
+    color: var(--blue-950);
+}
+
+.student-detail-header small {
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.student-history-list {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 480px;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.student-history-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.student-history-row strong {
+    display: block;
+    font-size: 0.88rem;
+    color: var(--blue-950);
+}
+
+.student-history-row small {
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.student-detail-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+
+/* Participation sheet */
+.participation-student-list {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 460px;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.participation-student-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 0.7rem;
+    align-items: center;
+    padding: 0.6rem 0.72rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.participation-student-row.is-absent {
+    background: #fff1f2;
+    border-color: #fecdd3;
+}
+
+.participation-student-identity strong {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--blue-950);
+}
+
+.participation-student-identity small {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.12rem;
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.participation-score-field .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.participation-student-row[data-just-marked="1"] {
+    border-color: var(--emerald-500);
+    background: var(--emerald-100);
+    transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.participation-hint {
+    margin: 0.7rem 0 0;
+    color: var(--slate-500);
+    font-size: 0.78rem;
+    font-weight: 650;
+}
+
+.participation-hint i {
+    color: var(--indigo-600);
+}
+
+/* Student picker */
+.picker-settings {
+    display: grid;
+    gap: 0.85rem;
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.picker-mode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.picker-mode-option {
+    flex: 1 1 180px;
+}
+
+.picker-mode-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.picker-mode-option span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    color: var(--slate-600);
+    font-weight: 800;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.picker-mode-option input[type="radio"]:checked + span {
+    border-color: var(--indigo-600);
+    background: #eef2ff;
+    color: var(--indigo-600);
+}
+
+.picker-mode-option input[type="radio"]:focus-visible + span {
+    outline: 2px solid var(--indigo-600);
+    outline-offset: 1px;
+}
+
+.picker-criteria {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.picker-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--slate-700);
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.picker-check input[type="checkbox"] {
+    width: 1.05rem;
+    height: 1.05rem;
+    accent-color: var(--indigo-600);
+}
+
+.picker-criteria.is-random [data-picker-criteria-only] {
+    opacity: 0.5;
+}
+
+.picker-spotlight {
+    display: grid;
+    place-items: center;
+    min-height: 220px;
+    padding: 1.25rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+    text-align: center;
+}
+
+.picker-spotlight-empty {
+    display: grid;
+    gap: 0.5rem;
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.picker-spotlight-empty i {
+    font-size: 2.5rem;
+    color: var(--slate-200);
+}
+
+.picker-spotlight-result {
+    display: grid;
+    gap: 0.5rem;
+    justify-items: center;
+    width: 100%;
+}
+
+.picker-avatar {
+    width: 64px;
+    height: 64px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--blue-900);
+    color: #fff;
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
+.picker-spotlight-result.is-animating .picker-avatar {
+    animation: picker-pulse 0.5s ease;
+}
+
+@keyframes picker-pulse {
+    0% { transform: scale(0.85); opacity: 0.4; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.picker-selected-name {
+    font-family: 'Manrope', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--blue-950);
+}
+
+.picker-selected-no {
+    color: var(--slate-500);
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.picker-mark-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.6rem;
+    width: 100%;
+    max-width: 320px;
+}
+
+.picker-mark-row .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.picker-mark-note {
+    color: #047857;
+    font-weight: 800;
+    font-size: 0.82rem;
+}
+
+.picker-pool-note {
+    margin-top: 0.85rem;
+    color: var(--slate-500);
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-align: center;
+    min-height: 1.2rem;
+}
+
+.student-search-bar {
+    margin-bottom: 0.7rem;
+}
+
+.student-search-empty {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.9rem;
+    margin-top: 0.55rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+    color: var(--slate-500);
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+.student-search-empty i {
+    color: var(--indigo-600);
+}
+
+.student-search-empty[hidden] {
+    display: none;
+}
+
+/* Assessment grading + groupings */
+.grading-student-list,
+.grouping-assign-list {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.grading-student-row,
+.grouping-assign-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 0.7rem;
+    align-items: center;
+    padding: 0.6rem 0.72rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.grading-student-identity strong,
+.grouping-assign-identity strong {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--blue-950);
+    overflow-wrap: anywhere;
+}
+
+.grading-student-identity small,
+.grouping-assign-identity small {
+    display: block;
+    margin-top: 0.12rem;
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.grading-score-field {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.grading-score-field .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.grading-score-max {
+    color: var(--slate-500);
+    font-weight: 800;
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
+
+.group-grade-list {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.group-grade-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    padding: 0.9rem;
+}
+
+.group-grade-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.7rem;
+    margin-bottom: 0.7rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.group-grade-head strong {
+    display: block;
+    font-size: 1rem;
+    color: var(--blue-950);
+}
+
+.group-grade-head small {
+    color: var(--slate-500);
+    font-weight: 700;
+}
+
+.group-grade-score {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 200px;
+}
+
+.group-grade-score .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.group-grade-members {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.group-grade-member {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 110px;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.group-grade-member strong {
+    font-size: 0.88rem;
+    color: var(--blue-950);
+}
+
+.group-grade-member .form-control {
+    text-align: center;
+    font-weight: 800;
+}
+
+.grouping-group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.85rem;
+}
+
+.grouping-group-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+    padding: 0.9rem;
+}
+
+.grouping-group-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
+}
+
+.assessment-mode-block,
+.grouping-config {
+    margin-top: 1.1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+}
+
+.activity-grouping-block {
+    margin-top: 0.85rem;
+    padding: 0.85rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.activity-grouping-block[hidden],
+[data-grouping-existing][hidden],
+[data-grouping-new][hidden] {
+    display: none;
 }
 
 .grading-settings-panel {
@@ -1359,13 +2181,47 @@ button:focus-visible {
     .grading-category-row,
     .grading-subcategory,
     .schedule-slot-row,
-    .attendance-student-row {
+    .attendance-student-row,
+    .participation-student-row,
+    .grading-student-row,
+    .grouping-assign-row,
+    .group-grade-member {
         grid-template-columns: 1fr;
+    }
+
+    .group-grade-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .participation-score-field .form-control {
+        max-width: 140px;
+    }
+
+    .student-detail-stats {
+        justify-content: flex-start;
     }
 
     .grading-subcategory-list {
         padding-left: 0;
         border-left: 0;
+    }
+
+    .meeting-week-nav,
+    .attention-item,
+    .student-detail-header,
+    .assessment-config-form,
+    .class-context-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .student-overview-row {
+        grid-template-columns: 1fr;
+    }
+
+    .student-overview-rate {
+        justify-items: start;
     }
 }
 

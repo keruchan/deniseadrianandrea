@@ -54,6 +54,12 @@ function instructor_class_views(): array
             'icon' => 'bi-chat-square-text',
             'description' => 'Track participation records for class engagement.',
         ],
+        'groupings' => [
+            'label' => 'Groupings',
+            'route' => 'class.groupings',
+            'icon' => 'bi-diagram-3',
+            'description' => 'Create and manage reusable student groupings for this class.',
+        ],
         'analytics' => [
             'label' => 'Analytics',
             'route' => 'class.analytics',
@@ -216,6 +222,12 @@ function instructor_sidebar_menu(array $classes, ?int $selectedClassId = null): 
                     'icon' => 'bi-patch-question',
                     'href' => instructor_class_route($selectedClassId, 'quizzes'),
                     'route' => 'class.quizzes',
+                ],
+                [
+                    'label' => 'Groupings',
+                    'icon' => 'bi-diagram-3',
+                    'href' => instructor_class_route($selectedClassId, 'groupings'),
+                    'route' => 'class.groupings',
                 ],
                 [
                     'label' => 'Major Exams',

@@ -1,4 +1,52 @@
 (() => {
+    // Preserve scroll position when opening or switching attendance/participation sheets.
+    // Sheet navigation is a full-page load to the same path with a different ?meeting_id=,
+    // so keying by pathname restores position across switches without leaking to other pages.
+    (() => {
+        if (!window.sessionStorage) {
+            return;
+        }
+
+        const scrollKey = 'edupredict:sheetScroll:' + window.location.pathname;
+
+        if ('scrollRestoration' in window.history) {
+            window.history.scrollRestoration = 'manual';
+        }
+
+        const saved = window.sessionStorage.getItem(scrollKey);
+        if (saved !== null) {
+            window.sessionStorage.removeItem(scrollKey);
+            const y = parseInt(saved, 10);
+
+            if (!Number.isNaN(y)) {
+                // Run after the synchronous setup below (e.g. week windowing) settles the height.
+                const restore = () => window.scrollTo(0, y);
+                window.requestAnimationFrame(() => {
+                    restore();
+                    window.requestAnimationFrame(restore);
+                });
+            }
+        }
+
+        const saveScroll = () => {
+            try {
+                window.sessionStorage.setItem(scrollKey, String(window.scrollY || window.pageYOffset || 0));
+            } catch (error) {
+                // Ignore storage errors so navigation still works.
+            }
+        };
+
+        document.addEventListener('click', (event) => {
+            if (event.target.closest('a[href*="meeting_id="]')) {
+                saveScroll();
+            }
+        });
+
+        document.querySelectorAll('[data-attendance-sheet], [data-participation-sheet]').forEach((form) => {
+            form.addEventListener('submit', saveScroll);
+        });
+    })();
+
     const sidebarGroups = document.querySelectorAll('[data-sidebar-group]');
 
     const readStoredGroupState = (storageKey) => {
@@ -191,6 +239,19 @@
         });
     });
 
+    // Attendance status selects: color the single control by its selected value.
+    const attendanceStatuses = ['present', 'absent', 'late', 'excused'];
+
+    const applyAttendanceStatusColor = (select) => {
+        attendanceStatuses.forEach((status) => select.classList.remove('status-' + status));
+        select.classList.add('status-' + select.value);
+    };
+
+    document.querySelectorAll('.attendance-status-select').forEach((select) => {
+        applyAttendanceStatusColor(select);
+        select.addEventListener('change', () => applyAttendanceStatusColor(select));
+    });
+
     document.querySelectorAll('[data-attendance-sheet]').forEach((form) => {
         const markAllButton = form.querySelector('[data-mark-all-present]');
 
@@ -199,8 +260,397 @@
         }
 
         markAllButton.addEventListener('click', () => {
-            form.querySelectorAll('[data-attendance-status]').forEach((select) => {
+            form.querySelectorAll('.attendance-status-select').forEach((select) => {
                 select.value = 'present';
+                applyAttendanceStatusColor(select);
+            });
+        });
+    });
+
+    // Real-time client-side student search for every student list (sheets + history modals).
+    document.querySelectorAll('[data-student-search-scope]').forEach((scope) => {
+        const input = scope.querySelector('[data-student-search]');
+        const list = scope.querySelector('[data-student-search-list]');
+        const emptyMessage = scope.querySelector('[data-student-search-empty]');
+
+        if (!input || !list) {
+            return;
+        }
+
+        const rows = Array.from(list.querySelectorAll('[data-search-terms]'));
+
+        const filterRows = () => {
+            const query = input.value.trim().toLowerCase();
+            let visibleCount = 0;
+
+            rows.forEach((row) => {
+                const matches = query === '' || (row.getAttribute('data-search-terms') || '').indexOf(query) !== -1;
+                row.style.display = matches ? '' : 'none';
+
+                if (matches) {
+                    visibleCount += 1;
+                }
+            });
+
+            if (emptyMessage) {
+                emptyMessage.hidden = visibleCount !== 0;
+            }
+        };
+
+        input.addEventListener('input', filterRows);
+    });
+
+    document.querySelectorAll('[data-meeting-weeks]').forEach((container) => {
+        const weekBlocks = Array.from(container.querySelectorAll('[data-week-index]'));
+
+        if (!weekBlocks.length) {
+            return;
+        }
+
+        const nav = container.previousElementSibling;
+        const prevBtn = nav ? nav.querySelector('[data-load-previous-weeks]') : null;
+        const moreBtn = nav ? nav.querySelector('[data-load-more-weeks]') : null;
+        const rangeLabel = nav ? nav.querySelector('[data-week-range-label]') : null;
+        const weekCount = weekBlocks.length;
+
+        let visibleStart = parseInt(container.getAttribute('data-visible-start'), 10) || 0;
+        let visibleEnd = parseInt(container.getAttribute('data-visible-end'), 10);
+        if (Number.isNaN(visibleEnd)) {
+            visibleEnd = weekCount - 1;
+        }
+
+        const applyVisibility = () => {
+            weekBlocks.forEach((block) => {
+                const idx = parseInt(block.getAttribute('data-week-index'), 10);
+                block.classList.toggle('is-hidden', idx < visibleStart || idx > visibleEnd);
+            });
+
+            if (prevBtn) {
+                prevBtn.disabled = visibleStart <= 0;
+            }
+
+            if (moreBtn) {
+                moreBtn.disabled = visibleEnd >= weekCount - 1;
+            }
+
+            if (rangeLabel) {
+                const startWeek = weekBlocks[visibleStart].getAttribute('data-week-number');
+                const endWeek = weekBlocks[visibleEnd].getAttribute('data-week-number');
+                rangeLabel.textContent = startWeek === endWeek
+                    ? `Week ${startWeek}`
+                    : `Weeks ${startWeek}–${endWeek}`;
+            }
+        };
+
+        applyVisibility();
+
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                visibleStart = Math.max(0, visibleStart - 1);
+                applyVisibility();
+            });
+        }
+
+        if (moreBtn) {
+            moreBtn.addEventListener('click', () => {
+                visibleEnd = Math.min(weekCount - 1, visibleEnd + 1);
+                applyVisibility();
+            });
+        }
+    });
+
+    // Student history modals (attendance + participation share this list/detail pattern).
+    document.querySelectorAll('#studentAttendanceModal, #studentParticipationModal').forEach((modal) => {
+        const showPanel = (target) => {
+            modal.querySelectorAll('[data-student-panel]').forEach((panel) => {
+                panel.classList.remove('is-active');
+            });
+
+            target.classList.add('is-active');
+        };
+
+        const listPanel = modal.querySelector('[data-student-panel="list"]');
+
+        modal.querySelectorAll('[data-student-select]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const studentId = row.getAttribute('data-student-select');
+                const detailPanel = modal.querySelector(`[data-student-panel="detail"][data-student-id="${studentId}"]`);
+
+                if (detailPanel) {
+                    showPanel(detailPanel);
+                }
+            });
+        });
+
+        modal.querySelectorAll('[data-student-back]').forEach((button) => {
+            button.addEventListener('click', () => {
+                if (listPanel) {
+                    showPanel(listPanel);
+                }
+            });
+        });
+
+        modal.addEventListener('hidden.bs.modal', () => {
+            if (listPanel) {
+                showPanel(listPanel);
+            }
+        });
+    });
+
+    // Recitation student picker.
+    document.querySelectorAll('[data-student-picker]').forEach((picker) => {
+        let students = [];
+        try {
+            students = JSON.parse(picker.getAttribute('data-picker-students') || '[]');
+        } catch (error) {
+            students = [];
+        }
+
+        const maxScore = parseFloat(picker.getAttribute('data-picker-max')) || 100;
+        const sheetForm = document.querySelector('[data-participation-sheet]');
+        const modeInputs = picker.querySelectorAll('[data-picker-mode]');
+        const criteriaWrap = picker.querySelector('[data-picker-criteria]');
+        const optionInputs = {
+            preventDuplicates: picker.querySelector('[data-picker-option="preventDuplicates"]'),
+            excludeAbsent: picker.querySelector('[data-picker-option="excludeAbsent"]'),
+            excludeGraded: picker.querySelector('[data-picker-option="excludeGraded"]'),
+        };
+        const emptyState = picker.querySelector('[data-picker-empty]');
+        const resultState = picker.querySelector('[data-picker-result]');
+        const avatar = picker.querySelector('[data-picker-avatar]');
+        const nameOut = picker.querySelector('[data-picker-name]');
+        const noOut = picker.querySelector('[data-picker-no]');
+        const scoreInput = picker.querySelector('[data-picker-score]');
+        const markButton = picker.querySelector('[data-picker-mark]');
+        const markNote = picker.querySelector('[data-picker-marknote]');
+        const poolNote = picker.querySelector('[data-picker-poolnote]');
+        const pickButton = picker.querySelector('[data-picker-pick]');
+        const refreshButton = picker.querySelector('[data-picker-refresh]');
+
+        const pickedThisSession = new Set();
+        let currentStudent = null;
+
+        const currentMode = () => {
+            const checked = picker.querySelector('[data-picker-mode]:checked');
+            return checked ? checked.value : 'random';
+        };
+
+        const isGraded = (student) => {
+            if (sheetForm) {
+                const input = sheetForm.querySelector(`[data-participation-score][name="participation[${student.id}]"]`);
+                if (input && input.value.trim() !== '') {
+                    return true;
+                }
+            }
+            return Boolean(student.graded);
+        };
+
+        const eligiblePool = () => {
+            const mode = currentMode();
+            return students.filter((student) => {
+                if (optionInputs.preventDuplicates && optionInputs.preventDuplicates.checked && pickedThisSession.has(student.id)) {
+                    return false;
+                }
+
+                if (mode === 'criteria') {
+                    if (optionInputs.excludeAbsent && optionInputs.excludeAbsent.checked && student.absent) {
+                        return false;
+                    }
+                    if (optionInputs.excludeGraded && optionInputs.excludeGraded.checked && isGraded(student)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+        };
+
+        const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('');
+
+        const updatePoolNote = () => {
+            const pool = eligiblePool();
+            poolNote.textContent = `${pool.length} student${pool.length === 1 ? '' : 's'} eligible`;
+            if (pickButton) {
+                pickButton.disabled = pool.length === 0;
+            }
+        };
+
+        const syncModeUi = () => {
+            if (criteriaWrap) {
+                criteriaWrap.classList.toggle('is-random', currentMode() === 'random');
+            }
+            if (currentMode() === 'criteria') {
+                if (optionInputs.excludeAbsent) optionInputs.excludeAbsent.checked = true;
+                if (optionInputs.excludeGraded) optionInputs.excludeGraded.checked = true;
+            } else {
+                if (optionInputs.excludeAbsent) optionInputs.excludeAbsent.checked = false;
+                if (optionInputs.excludeGraded) optionInputs.excludeGraded.checked = false;
+            }
+            updatePoolNote();
+        };
+
+        const showResult = (student) => {
+            currentStudent = student;
+            emptyState.hidden = true;
+            resultState.hidden = false;
+            avatar.textContent = initials(student.name) || '?';
+            nameOut.textContent = student.name;
+            noOut.textContent = student.student_no || '';
+            if (markNote) {
+                markNote.hidden = true;
+            }
+            if (scoreInput) {
+                scoreInput.value = '';
+            }
+            resultState.classList.remove('is-animating');
+            void resultState.offsetWidth;
+            resultState.classList.add('is-animating');
+        };
+
+        const pick = () => {
+            const pool = eligiblePool();
+            if (!pool.length) {
+                updatePoolNote();
+                return;
+            }
+            const choice = pool[Math.floor(Math.random() * pool.length)];
+            pickedThisSession.add(choice.id);
+            showResult(choice);
+            updatePoolNote();
+        };
+
+        modeInputs.forEach((input) => input.addEventListener('change', syncModeUi));
+        Object.values(optionInputs).forEach((input) => {
+            if (input) {
+                input.addEventListener('change', updatePoolNote);
+            }
+        });
+
+        if (pickButton) {
+            pickButton.addEventListener('click', pick);
+        }
+
+        // Re-evaluate eligibility against current criteria and clear this session's
+        // temporary "already picked" flags. Saved grades in the sheet are untouched,
+        // so picked-but-ungraded students return to the pool while graded ones stay
+        // excluded when "exclude already graded" is on.
+        if (refreshButton) {
+            refreshButton.addEventListener('click', () => {
+                pickedThisSession.clear();
+                currentStudent = null;
+                resultState.hidden = true;
+                emptyState.hidden = false;
+
+                if (markNote) {
+                    markNote.hidden = true;
+                }
+
+                updatePoolNote();
+            });
+        }
+
+        if (markButton) {
+            markButton.addEventListener('click', () => {
+                if (!currentStudent || !sheetForm) {
+                    return;
+                }
+                let value = scoreInput ? scoreInput.value.trim() : '';
+                if (value === '') {
+                    value = String(maxScore);
+                }
+                let numeric = parseFloat(value);
+                if (Number.isNaN(numeric)) {
+                    numeric = maxScore;
+                }
+                numeric = Math.max(0, Math.min(maxScore, numeric));
+
+                const scoreField = sheetForm.querySelector(`[data-participation-score][name="participation[${currentStudent.id}]"]`);
+                if (scoreField) {
+                    scoreField.value = String(numeric);
+                }
+                const row = sheetForm.querySelector(`[data-participation-student="${currentStudent.id}"]`);
+                if (row) {
+                    row.setAttribute('data-just-marked', '1');
+                }
+
+                if (markNote) {
+                    markNote.hidden = false;
+                    markNote.textContent = `Marked ${currentStudent.name} with ${numeric}. Save the sheet to keep it.`;
+                }
+                updatePoolNote();
+            });
+        }
+
+        picker.closest('.modal').addEventListener('shown.bs.modal', () => {
+            syncModeUi();
+        });
+
+        syncModeUi();
+    });
+
+    // Activity setup: toggle group grouping options by mode + grouping source.
+    document.querySelectorAll('[data-activity-item-form]').forEach((form) => {
+        const groupingBlock = form.querySelector('[data-activity-grouping]');
+        const existingBlock = form.querySelector('[data-grouping-existing]');
+        const newBlock = form.querySelector('[data-grouping-new]');
+
+        const syncMode = () => {
+            const checked = form.querySelector('[data-activity-mode]:checked');
+            if (groupingBlock) {
+                groupingBlock.hidden = !(checked && checked.value === 'group');
+            }
+        };
+
+        const syncSource = () => {
+            const checked = form.querySelector('[data-grouping-source]:checked');
+            const isNew = checked && checked.value === 'new';
+            if (existingBlock) {
+                existingBlock.hidden = isNew;
+            }
+            if (newBlock) {
+                newBlock.hidden = !isNew;
+            }
+        };
+
+        form.querySelectorAll('[data-activity-mode]').forEach((input) => input.addEventListener('change', syncMode));
+        form.querySelectorAll('[data-grouping-source]').forEach((input) => input.addEventListener('change', syncSource));
+
+        syncMode();
+        syncSource();
+    });
+
+    // Standalone grouping-source toggle (grading screen "assign grouping" form).
+    document.querySelectorAll('[data-grouping-assign]').forEach((form) => {
+        const existingBlock = form.querySelector('[data-grouping-existing]');
+        const newBlock = form.querySelector('[data-grouping-new]');
+
+        const sync = () => {
+            const checked = form.querySelector('[data-grouping-source]:checked');
+            const isNew = checked && checked.value === 'new';
+            if (existingBlock) {
+                existingBlock.hidden = isNew;
+            }
+            if (newBlock) {
+                newBlock.hidden = !isNew;
+            }
+        };
+
+        form.querySelectorAll('[data-grouping-source]').forEach((input) => input.addEventListener('change', sync));
+        sync();
+    });
+
+    // Group grading: the group score fills every member as the default grade.
+    document.querySelectorAll('[data-group-grade]').forEach((card) => {
+        const groupScore = card.querySelector('[data-group-score]');
+        const members = card.querySelectorAll('[data-group-member-score]');
+
+        if (!groupScore) {
+            return;
+        }
+
+        groupScore.addEventListener('input', () => {
+            members.forEach((member) => {
+                member.value = groupScore.value;
             });
         });
     });

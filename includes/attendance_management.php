@@ -468,6 +468,164 @@ function active_student_ids_for_class(PDO $pdo, int $classId): array
     return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
 }
 
+function attendance_record_status_meta(): array
+{
+    return [
+        'present' => ['label' => 'Present', 'icon' => 'bi-check-circle-fill'],
+        'absent' => ['label' => 'Absent', 'icon' => 'bi-x-circle-fill'],
+        'late' => ['label' => 'Late', 'icon' => 'bi-clock-fill'],
+        'excused' => ['label' => 'Excused', 'icon' => 'bi-shield-fill-check'],
+    ];
+}
+
+function meeting_visual_state(array $meeting): string
+{
+    if (in_array($meeting['status'], ['holiday', 'cancelled'], true)) {
+        return (string) $meeting['status'];
+    }
+
+    if ((int) $meeting['record_count'] > 0) {
+        return 'completed';
+    }
+
+    if ((string) $meeting['meeting_date'] > date('Y-m-d')) {
+        return 'upcoming';
+    }
+
+    return 'pending';
+}
+
+function meeting_visual_state_meta(): array
+{
+    return [
+        'completed' => ['label' => 'Completed', 'icon' => 'bi-check-circle-fill'],
+        'pending' => ['label' => 'Pending', 'icon' => 'bi-exclamation-circle-fill'],
+        'upcoming' => ['label' => 'Upcoming', 'icon' => 'bi-calendar2-week'],
+        'holiday' => ['label' => 'Holiday', 'icon' => 'bi-sun-fill'],
+        'cancelled' => ['label' => 'Cancelled', 'icon' => 'bi-slash-circle'],
+    ];
+}
+
+function attendance_current_week_number(array $meetings): int
+{
+    if (empty($meetings)) {
+        return 1;
+    }
+
+    $today = strtotime(date('Y-m-d'));
+    $closestWeek = (int) $meetings[0]['week_number'];
+    $closestDiff = null;
+
+    foreach ($meetings as $meeting) {
+        $diff = abs(strtotime((string) $meeting['meeting_date']) - $today);
+
+        if ($closestDiff === null || $diff < $closestDiff) {
+            $closestDiff = $diff;
+            $closestWeek = (int) $meeting['week_number'];
+        }
+    }
+
+    return $closestWeek;
+}
+
+function get_meetings_needing_attention(array $meetings): array
+{
+    $today = date('Y-m-d');
+
+    return array_values(array_filter($meetings, static function (array $meeting) use ($today): bool {
+        return $meeting['status'] === 'regular'
+            && (string) $meeting['meeting_date'] <= $today
+            && (int) $meeting['record_count'] === 0;
+    }));
+}
+
+function get_class_enrolled_students(PDO $pdo, int $classId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT s.id, s.student_no, CONCAT(s.first_name, " ", s.last_name) AS student_name
+         FROM class_enrollments ce
+         INNER JOIN students s ON s.id = ce.student_id
+         WHERE ce.class_id = :class_id AND ce.status = "active"
+         ORDER BY s.last_name ASC, s.first_name ASC'
+    );
+    $stmt->execute([':class_id' => $classId]);
+
+    return $stmt->fetchAll();
+}
+
+function get_class_attendance_matrix(PDO $pdo, int $classId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT ar.student_id, ar.meeting_id, ar.status
+         FROM attendance_records ar
+         INNER JOIN class_meetings cm ON cm.id = ar.meeting_id
+         WHERE cm.class_id = :class_id'
+    );
+    $stmt->execute([':class_id' => $classId]);
+
+    $matrix = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $matrix[(int) $row['student_id']][(int) $row['meeting_id']] = (string) $row['status'];
+    }
+
+    return $matrix;
+}
+
+function build_student_attendance_overview(array $students, array $meetings, array $matrix): array
+{
+    $overview = [];
+
+    foreach ($students as $student) {
+        $studentId = (int) $student['id'];
+        $studentMatrix = $matrix[$studentId] ?? [];
+        $attended = 0;
+        $total = 0;
+
+        foreach ($meetings as $meeting) {
+            if ($meeting['status'] !== 'regular') {
+                continue;
+            }
+
+            $status = $studentMatrix[(int) $meeting['id']] ?? null;
+
+            if ($status === null) {
+                continue;
+            }
+
+            $total++;
+            if (in_array($status, ['present', 'late', 'excused'], true)) {
+                $attended++;
+            }
+        }
+
+        $overview[] = [
+            'id' => $studentId,
+            'student_no' => (string) $student['student_no'],
+            'student_name' => (string) $student['student_name'],
+            'attended' => $attended,
+            'total' => $total,
+            'rate' => $total > 0 ? (int) round(($attended / $total) * 100) : null,
+        ];
+    }
+
+    return $overview;
+}
+
+function build_student_meeting_history(array $meetings, array $matrix, int $studentId): array
+{
+    $studentMatrix = $matrix[$studentId] ?? [];
+    $history = [];
+
+    foreach ($meetings as $meeting) {
+        $history[] = [
+            'meeting' => $meeting,
+            'status' => $studentMatrix[(int) $meeting['id']] ?? null,
+        ];
+    }
+
+    return $history;
+}
+
 function save_attendance_records(PDO $pdo, int $meetingId, array $attendance, ?int $classId = null): void
 {
     $statuses = attendance_record_statuses();
