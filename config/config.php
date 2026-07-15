@@ -45,7 +45,7 @@ define('APP_BASE_PATH', '');
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'u763192172_edutrack');
 define('DB_USER', 'u763192172_edutr');
-define('DB_PASS', 'Romulorioqui44!');
+define('DB_PASS', 'madalingtandaanJL28');
 define('DB_CHARSET', 'utf8mb4');
 
 $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
@@ -58,8 +58,7 @@ $options = [
 try {
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
 } catch (PDOException $e) {
-    error_log('[EDUPREDICT DB CONNECTION ERROR] ' . $e->getMessage());
-    die('Unable to connect to EDUPREDICT at this time. Please try again later.');
+    die("Database Error: " . $e->getMessage());
 }
 
 date_default_timezone_set('Asia/Manila');
