@@ -4,6 +4,8 @@
  * Each role dashboard passes menu items, cards, and placeholder widgets.
  */
 
+require_once __DIR__ . '/notification_management.php';
+
 function sidebar_item_is_visible(array $item): bool
 {
     return !array_key_exists('visible', $item) || (bool) $item['visible'];
@@ -227,6 +229,20 @@ function render_dashboard_page(array $page): void
     $widgets = $page['widgets'] ?? [];
     $contentCallback = $page['content'] ?? null;
     $todayLabel = date('l, F j, Y');
+
+    // Notification bell state (shared by every role).
+    global $pdo;
+    $notifUnread = 0;
+    $notifCsrf = '';
+    if ($pdo instanceof PDO && !empty($_SESSION['id'])) {
+        try {
+            ensure_notifications_schema($pdo);
+            $notifUnread = count_unread_notifications($pdo, (int) $_SESSION['id']);
+        } catch (Throwable $e) {
+            $notifUnread = 0;
+        }
+        $notifCsrf = csrf_token('csrf_notifications_token');
+    }
     ?>
 <!doctype html>
 <html lang="en">
@@ -292,10 +308,32 @@ function render_dashboard_page(array $page): void
                     <div class="date-line"><?php echo e($todayLabel); ?></div>
                 </div>
                 <div class="topbar-actions">
-                    <button class="btn-icon notification-button" type="button" aria-label="Notifications placeholder">
-                        <i class="bi bi-bell"></i>
-                        <span class="notification-dot" aria-hidden="true"></span>
-                    </button>
+                    <div class="notification-bell" data-notifications
+                         data-ajax-url="<?php echo e(url_for('ajax/notifications.php')); ?>"
+                         data-csrf="<?php echo e($notifCsrf); ?>">
+                        <button class="btn-icon notification-button" type="button" data-notif-toggle aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
+                            <i class="bi bi-bell"></i>
+                            <span class="notification-badge" data-notif-badge<?php echo $notifUnread > 0 ? '' : ' hidden'; ?>><?php echo $notifUnread > 99 ? '99+' : (int) $notifUnread; ?></span>
+                        </button>
+                        <div class="notification-panel" data-notif-panel hidden role="dialog" aria-label="Notifications">
+                            <div class="notification-panel-head">
+                                <strong>Notifications</strong>
+                                <button type="button" class="notification-markall" data-notif-markall>Mark all as read</button>
+                            </div>
+                            <div class="notification-list" data-notif-list>
+                                <div class="notification-loading" data-notif-loading>
+                                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading&hellip;
+                                </div>
+                            </div>
+                            <div class="notification-empty" data-notif-empty hidden>
+                                <i class="bi bi-bell-slash"></i>
+                                <span>You're all caught up.</span>
+                            </div>
+                            <div class="notification-panel-foot" data-notif-foot hidden>
+                                <button type="button" class="notification-loadmore" data-notif-loadmore>Load more</button>
+                            </div>
+                        </div>
+                    </div>
                     <div class="dropdown">
                         <button class="profile-button dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <span class="avatar-dot"><?php echo e(first_initial($displayName)); ?></span>
@@ -357,7 +395,10 @@ function render_dashboard_page(array $page): void
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="<?php echo e(url_for('js/dashboard.js')); ?>"></script>
+    <script src="<?php echo e(url_for('js/insights.js')); ?>"></script>
+    <script src="<?php echo e(url_for('js/notifications.js')); ?>"></script>
 </body>
 </html>
     <?php

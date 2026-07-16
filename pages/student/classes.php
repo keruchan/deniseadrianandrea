@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../includes/helpers.php';
+require_once __DIR__ . '/../../includes/sidebar_config.php';
 require_once __DIR__ . '/../../includes/dashboard_layout.php';
 
 require_role('student');
@@ -38,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         try {
             $classStmt = $pdo->prepare(
-                'SELECT id, class_name, subject_name, status
+                'SELECT id, class_name, subject_name, status, instructor_id
                  FROM classes
                  WHERE class_code = :class_code
                  LIMIT 1'
@@ -73,6 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
                     $updateStmt->execute([':id' => (int) $existingEnrollment['id']]);
 
+                    notify_class_instructor_of_join($pdo, $class, current_display_name('A student'), true);
                     rotate_csrf_token('csrf_class_join_token');
                     $_SESSION['join_success'] = 'You rejoined ' . $class['class_name'] . '.';
                     redirect_to('pages/student/classes.php');
@@ -87,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':status'     => 'active',
                     ]);
 
+                    notify_class_instructor_of_join($pdo, $class, current_display_name('A student'), false);
                     rotate_csrf_token('csrf_class_join_token');
                     $_SESSION['join_success'] = 'You joined ' . $class['class_name'] . '.';
                     redirect_to('pages/student/classes.php');
@@ -123,26 +126,14 @@ $classesStmt = $pdo->prepare(
 $classesStmt->execute([':student_id' => $studentId]);
 $classes = $classesStmt->fetchAll();
 
-$menu = [
-    ['label' => 'Dashboard', 'icon' => 'bi-grid-1x2-fill', 'href' => 'dashboard.php'],
-    ['label' => 'My Classes', 'icon' => 'bi-easel2', 'href' => 'classes.php'],
-    ['label' => 'Grades', 'icon' => 'bi-clipboard-data', 'href' => '#'],
-    ['label' => 'Attendance', 'icon' => 'bi-calendar-check', 'href' => '#'],
-    ['label' => 'Progress', 'icon' => 'bi-activity', 'href' => '#'],
-    ['label' => 'Target Grade', 'icon' => 'bi-bullseye', 'href' => '#'],
-    ['label' => 'Predictions', 'icon' => 'bi-stars', 'href' => '#'],
-    ['label' => 'Warnings', 'icon' => 'bi-exclamation-triangle', 'href' => '#'],
-    ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => '#'],
-];
-
 render_dashboard_page([
     'role_label' => 'Student',
     'fallback_name' => 'Student',
     'title' => 'My Classes',
     'eyebrow' => 'Join classroom',
     'description' => 'Join an instructor class using the shared class code or invite link.',
-    'active' => 'My Classes',
-    'menu' => $menu,
+    'active_route' => 'student.classes',
+    'menu' => student_sidebar_menu(),
     'content' => function () use ($errors, $successMessage, $joinCode, $csrfToken, $classes) {
         ?>
         <section class="content-grid two-columns">
@@ -224,6 +215,7 @@ render_dashboard_page([
                                 </div>
                                 <span class="joined-date">Joined <?php echo e(date('M j, Y', strtotime((string) $class['joined_at']))); ?></span>
                             </div>
+                            <a class="btn btn-edupredict btn-sm mt-2" href="<?php echo e(url_for('pages/student/class-insights.php') . '?class_id=' . (int) $class['id'] . '&tab=grades'); ?>"><i class="bi bi-graph-up"></i> My insights</a>
                         </article>
                     <?php endforeach; ?>
                 </div>

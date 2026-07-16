@@ -571,6 +571,48 @@ function get_class_attendance_matrix(PDO $pdo, int $classId): array
     return $matrix;
 }
 
+/**
+ * Attendance status per student for a given calendar date, resolved from the
+ * class meeting scheduled on that date. Used by assessment grading to show each
+ * student's Present/Absent/Late/Excused for the assessment date.
+ *
+ * Returns ['has_meeting' => bool, 'meeting' => ?array, 'statuses' => [student_id => status]].
+ * When no meeting exists on that date, has_meeting is false and statuses is empty.
+ */
+function get_attendance_status_for_date(PDO $pdo, int $classId, ?string $date): array
+{
+    $empty = ['has_meeting' => false, 'meeting' => null, 'statuses' => []];
+    if ($date === null || trim($date) === '') {
+        return $empty;
+    }
+
+    // Prefer a regular meeting on that date; fall back to any meeting on the date.
+    $stmt = $pdo->prepare(
+        'SELECT id, meeting_date, week_number, status, meeting_type
+         FROM class_meetings
+         WHERE class_id = :class_id AND meeting_date = :date
+         ORDER BY (status = "regular") DESC, id ASC
+         LIMIT 1'
+    );
+    $stmt->execute([':class_id' => $classId, ':date' => $date]);
+    $meeting = $stmt->fetch();
+    if (!$meeting) {
+        return $empty;
+    }
+
+    $records = $pdo->prepare(
+        'SELECT student_id, status FROM attendance_records WHERE meeting_id = :meeting_id'
+    );
+    $records->execute([':meeting_id' => (int) $meeting['id']]);
+
+    $statuses = [];
+    foreach ($records->fetchAll() as $row) {
+        $statuses[(int) $row['student_id']] = (string) $row['status'];
+    }
+
+    return ['has_meeting' => true, 'meeting' => $meeting, 'statuses' => $statuses];
+}
+
 function build_student_attendance_overview(array $students, array $meetings, array $matrix): array
 {
     $overview = [];

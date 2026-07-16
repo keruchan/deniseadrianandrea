@@ -3,6 +3,7 @@ require_once __DIR__ . '/../../config/config.php';
 require_once __DIR__ . '/../../includes/helpers.php';
 require_once __DIR__ . '/../../includes/sidebar_config.php';
 require_once __DIR__ . '/../../includes/dashboard_layout.php';
+require_once __DIR__ . '/../../includes/insights_management.php';
 
 require_role('instructor');
 
@@ -11,123 +12,204 @@ if ($instructorId === null) {
     redirect_to('pages/auth/logout.php');
 }
 
-$sidebarClasses = instructor_sidebar_classes($pdo, $instructorId);
+ensure_insights_schema($pdo);
 
-$gradingCategories = [
-    [
-        'name' => 'Course Requirements',
-        'weight' => 20,
-        'children' => [
-            ['name' => 'Attendance', 'weight' => 5],
-            ['name' => 'Participation', 'weight' => 15],
-        ],
-    ],
-    [
-        'name' => 'Activities',
-        'weight' => 20,
-        'children' => [],
-    ],
-    [
-        'name' => 'Quizzes',
-        'weight' => 20,
-        'children' => [],
-    ],
-    [
-        'name' => 'Major Exams',
-        'weight' => 40,
-        'children' => [
-            ['name' => 'Midterm', 'weight' => 20],
-            ['name' => 'Finals', 'weight' => 20],
-        ],
-    ],
-];
+$sidebarClasses = instructor_sidebar_classes($pdo, $instructorId);
+$components = grading_weight_components();
+
+// Resolve the class being edited: ?class_id=, else first active class.
+$requestedClassId = (int) ($_GET['class_id'] ?? 0);
+$selectedClassId = 0;
+foreach ($sidebarClasses as $class) {
+    if ($requestedClassId === (int) $class['id']) {
+        $selectedClassId = (int) $class['id'];
+        break;
+    }
+}
+if ($selectedClassId === 0 && !empty($sidebarClasses)) {
+    $selectedClassId = (int) $sidebarClasses[0]['id'];
+}
+
+$errors = [];
+$fieldErrors = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['grading_action'] ?? '') === 'save_weights') {
+    $postClassId = (int) ($_POST['class_id'] ?? 0);
+    $ownsClass = false;
+    foreach ($sidebarClasses as $class) {
+        if ((int) $class['id'] === $postClassId) {
+            $ownsClass = true;
+            break;
+        }
+    }
+
+    if (!csrf_is_valid('csrf_grading_settings_token', (string) ($_POST['csrf_token'] ?? ''))) {
+        $errors[] = 'Your session expired. Please try again.';
+    } elseif (!$ownsClass) {
+        $errors[] = 'Select one of your classes before saving.';
+    } else {
+        [$clean, $fieldErrors] = validate_grading_weights($_POST);
+        if (empty($fieldErrors)) {
+            save_class_grading_weights($pdo, $postClassId, $clean);
+            rotate_csrf_token('csrf_grading_settings_token');
+            $savedLabel = 'class';
+            foreach ($sidebarClasses as $class) {
+                if ((int) $class['id'] === $postClassId) {
+                    $savedLabel = instructor_class_label($class);
+                    break;
+                }
+            }
+            $_SESSION['grading_success'] = 'Grading weights saved for ' . $savedLabel . '.';
+            redirect_to('settings/grading?class_id=' . $postClassId);
+        }
+        $selectedClassId = $postClassId;
+    }
+}
+
+// Weights to show: repopulate from a failed POST, else the persisted/default values.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($fieldErrors)) {
+    $weights = [];
+    foreach ($components as $key => $label) {
+        $weights[$key] = (string) ($_POST[$key . '_weight'] ?? '');
+    }
+    $weights['passing_grade'] = (string) ($_POST['passing_grade'] ?? '');
+} elseif ($selectedClassId > 0) {
+    $stored = get_class_grading_weights($pdo, $selectedClassId);
+    $weights = [];
+    foreach ($components as $key => $label) {
+        $weights[$key] = rtrim(rtrim(number_format($stored[$key], 2), '0'), '.');
+    }
+    $weights['passing_grade'] = rtrim(rtrim(number_format($stored['passing_grade'], 2), '0'), '.');
+} else {
+    $defaults = grading_weight_defaults();
+    $weights = [];
+    foreach ($components as $key => $label) {
+        $weights[$key] = rtrim(rtrim(number_format($defaults[$key], 2), '0'), '.');
+    }
+    $weights['passing_grade'] = rtrim(rtrim(number_format($defaults['passing_grade'], 2), '0'), '.');
+}
+
+$successFlash = $_SESSION['grading_success'] ?? null;
+unset($_SESSION['grading_success']);
+$csrfToken = csrf_token('csrf_grading_settings_token');
 
 render_dashboard_page([
     'role_label' => 'Instructor',
     'fallback_name' => 'Instructor',
     'title' => 'Grading Settings',
     'eyebrow' => 'Settings',
-    'description' => 'Design assessment categories, subcategories, and grading weights before connecting persistence.',
+    'description' => 'Set the grade-component weights that power grading, predictions, and insights for each class.',
     'active_route' => 'settings.grading',
     'menu' => instructor_sidebar_menu($sidebarClasses),
-    'content' => function () use ($gradingCategories) {
+    'content' => function () use ($sidebarClasses, $selectedClassId, $components, $weights, $errors, $fieldErrors, $successFlash, $csrfToken) {
         ?>
         <section class="content-grid two-columns">
             <article class="form-panel grading-settings-panel">
                 <div class="section-heading">
                     <h2>Assessment Weights</h2>
-                    <span>UI draft</span>
+                    <span>Per class</span>
                 </div>
 
-                <form data-grading-settings-form novalidate>
-                    <div class="grading-status" data-grading-status>
-                        <div>
-                            <span>Total weight</span>
-                            <strong><span data-grading-total>100</span>%</strong>
-                        </div>
-                        <p data-grading-message>Weights are valid. Total grading weight is 100%.</p>
+                <?php if ($successFlash): ?>
+                    <div class="alert alert-success" role="alert"><?php echo e($successFlash); ?></div>
+                <?php endif; ?>
+
+                <?php if (!empty($errors)): ?>
+                    <div class="alert alert-danger" role="alert">
+                        <ul class="mb-0">
+                            <?php foreach ($errors as $error): ?>
+                                <li><?php echo e($error); ?></li>
+                            <?php endforeach; ?>
+                        </ul>
                     </div>
+                <?php endif; ?>
 
-                    <div class="grading-category-list" data-grading-category-list>
-                        <?php foreach ($gradingCategories as $category): ?>
-                            <div class="grading-category" data-grading-category>
-                                <div class="grading-category-row">
-                                    <div class="grading-name-field">
-                                        <label class="form-label">Category</label>
-                                        <input type="text" class="form-control" value="<?php echo e($category['name']); ?>" data-category-name>
-                                    </div>
-                                    <div class="grading-weight-field">
-                                        <label class="form-label">Weight</label>
-                                        <div>
-                                            <input type="number" class="form-control" value="<?php echo e((string) $category['weight']); ?>" min="0" max="100" step="1" data-category-weight>
-                                            <span>%</span>
-                                        </div>
-                                    </div>
-                                    <div class="grading-row-actions">
-                                        <button class="btn btn-copy" type="button" data-add-subcategory><i class="bi bi-plus-circle"></i> Subcategory</button>
-                                        <button class="btn btn-copy btn-danger-soft" type="button" data-delete-category><i class="bi bi-trash"></i> Delete</button>
-                                    </div>
-                                </div>
+                <?php if (empty($sidebarClasses)): ?>
+                    <div class="empty-state">
+                        <i class="bi bi-easel2"></i>
+                        <h3>No active classes yet</h3>
+                        <p>Create and activate a class first, then set its grading weights here.</p>
+                        <a class="btn btn-edupredict" href="<?php echo e(url_for('classes')); ?>">Go to Classes</a>
+                    </div>
+                <?php else: ?>
+                    <form method="get" action="<?php echo e(url_for('settings/grading')); ?>" class="grading-class-picker">
+                        <label class="form-label" for="grading-class-select">Class</label>
+                        <select class="form-select" id="grading-class-select" name="class_id" onchange="this.form.submit()">
+                            <?php foreach ($sidebarClasses as $class): ?>
+                                <option value="<?php echo (int) $class['id']; ?>" <?php echo $selectedClassId === (int) $class['id'] ? 'selected' : ''; ?>>
+                                    <?php echo e(instructor_class_label($class)); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </form>
 
-                                <div class="grading-subcategory-list" data-grading-subcategory-list>
-                                    <?php foreach ($category['children'] as $child): ?>
-                                        <div class="grading-subcategory" data-grading-subcategory>
-                                            <div class="grading-name-field">
-                                                <label class="form-label">Subcategory</label>
-                                                <input type="text" class="form-control" value="<?php echo e($child['name']); ?>" data-subcategory-name>
-                                            </div>
-                                            <div class="grading-weight-field">
-                                                <label class="form-label">Weight</label>
-                                                <div>
-                                                    <input type="number" class="form-control" value="<?php echo e((string) $child['weight']); ?>" min="0" max="100" step="1" data-subcategory-weight>
-                                                    <span>%</span>
-                                                </div>
-                                            </div>
-                                            <button class="btn btn-copy btn-danger-soft" type="button" data-delete-subcategory aria-label="Delete subcategory"><i class="bi bi-trash"></i></button>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                                <p class="grading-category-error" data-category-error></p>
+                    <form method="post" action="<?php echo e(url_for('settings/grading')); ?>" data-grading-weights-form novalidate>
+                        <input type="hidden" name="grading_action" value="save_weights">
+                        <input type="hidden" name="class_id" value="<?php echo (int) $selectedClassId; ?>">
+                        <input type="hidden" name="csrf_token" value="<?php echo e($csrfToken); ?>">
+
+                        <div class="grading-status" data-grading-status>
+                            <div>
+                                <span>Total weight</span>
+                                <strong><span data-grading-total>0</span>%</strong>
                             </div>
-                        <?php endforeach; ?>
-                    </div>
+                            <p data-grading-message>Component weights must total exactly 100%.</p>
+                        </div>
+                        <?php if (isset($fieldErrors['total'])): ?>
+                            <p class="field-error d-block"><?php echo e($fieldErrors['total']); ?></p>
+                        <?php endif; ?>
 
-                    <div class="grading-settings-actions">
-                        <button class="btn btn-copy" type="button" data-add-category><i class="bi bi-plus-circle"></i> Add category</button>
-                        <button class="btn btn-edupredict" type="submit" data-save-grading><i class="bi bi-check2-circle"></i> Save settings</button>
-                    </div>
-                </form>
+                        <div class="grading-weight-grid">
+                            <?php foreach ($components as $key => $label): ?>
+                                <div class="field">
+                                    <label class="form-label" for="weight-<?php echo e($key); ?>"><?php echo e($label); ?></label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control<?php echo isset($fieldErrors[$key]) ? ' is-invalid' : ''; ?>"
+                                               id="weight-<?php echo e($key); ?>" name="<?php echo e($key); ?>_weight"
+                                               value="<?php echo e($weights[$key]); ?>" min="0" max="100" step="0.5"
+                                               data-grading-weight-input inputmode="decimal">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                    <?php if (isset($fieldErrors[$key])): ?>
+                                        <p class="field-error d-block"><?php echo e($fieldErrors[$key]); ?></p>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <div class="field field-passing">
+                            <label class="form-label" for="passing_grade">Passing grade</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control<?php echo isset($fieldErrors['passing_grade']) ? ' is-invalid' : ''; ?>"
+                                       id="passing_grade" name="passing_grade"
+                                       value="<?php echo e($weights['passing_grade']); ?>" min="1" max="100" step="0.5" inputmode="decimal">
+                                <span class="input-group-text">%</span>
+                            </div>
+                            <?php if (isset($fieldErrors['passing_grade'])): ?>
+                                <p class="field-error d-block"><?php echo e($fieldErrors['passing_grade']); ?></p>
+                            <?php endif; ?>
+                            <small class="text-muted">Used as the fail/pass threshold for predictions and at-risk flags.</small>
+                        </div>
+
+                        <div class="grading-settings-actions">
+                            <span class="grading-save-state" data-grading-dirty hidden><i class="bi bi-exclamation-circle-fill"></i> Unsaved changes</span>
+                            <span class="grading-save-state is-saved" data-grading-clean hidden><i class="bi bi-check-circle-fill"></i> All changes saved</span>
+                            <button class="btn btn-edupredict" type="submit" data-grading-save><i class="bi bi-check2-circle"></i> Save weights</button>
+                        </div>
+                    </form>
+                <?php endif; ?>
             </article>
 
             <aside class="info-panel">
                 <div class="section-heading">
-                    <h2>Validation Rules</h2>
-                    <span>Required</span>
+                    <h2>How weights are used</h2>
+                    <span>Reference</span>
                 </div>
                 <div class="steps-list">
-                    <div><strong>1</strong><span>Top-level category weights must total exactly 100%.</span></div>
-                    <div><strong>2</strong><span>Subcategory weights must match their parent category.</span></div>
-                    <div><strong>3</strong><span>Saving stays disabled until the grading structure is valid.</span></div>
+                    <div><strong>1</strong><span>The six component weights must total exactly 100%.</span></div>
+                    <div><strong>2</strong><span>Each student's current grade is the weighted average of completed components.</span></div>
+                    <div><strong>3</strong><span>Predictions project the remaining components to forecast the final grade.</span></div>
+                    <div><strong>4</strong><span>The passing grade sets the at-risk threshold across Insights.</span></div>
                 </div>
             </aside>
         </section>

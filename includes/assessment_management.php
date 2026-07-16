@@ -1,12 +1,12 @@
 <?php
 /**
- * Activities & Quizzes (assessment) configuration helpers.
+ * Assessment configuration helpers.
  *
- * A class optionally configures a total number of activities and quizzes.
- * Once a total is set, numbered items ("Activity 1..N", "Quiz 1..N") are
- * generated as class_assessment_items rows that instructors can rename,
- * edit, and grade later. Recorded scores protect items from automatic
- * removal when totals are reduced.
+ * A class optionally configures total item counts for activities, quizzes,
+ * midterm exams, and final exams. Once a total is set, numbered items are
+ * generated as class_assessment_items rows that instructors can rename, edit,
+ * and grade later. Recorded scores protect items from automatic removal when
+ * totals are reduced.
  */
 
 function assessment_types(): array
@@ -26,12 +26,47 @@ function assessment_types(): array
             'icon' => 'bi-patch-question',
             'default_max' => 10,
         ],
+        'midterm' => [
+            'label' => 'Midterm Exam',
+            'plural' => 'Midterm Exams',
+            'view' => 'midterm',
+            'icon' => 'bi-clipboard-data',
+            'default_max' => 100,
+        ],
+        'finals' => [
+            'label' => 'Final Exam',
+            'plural' => 'Final Exams',
+            'view' => 'finals',
+            'icon' => 'bi-clipboard2-check',
+            'default_max' => 100,
+        ],
+    ];
+}
+
+function assessment_setting_columns(): array
+{
+    return [
+        'activity' => 'total_activities',
+        'quiz' => 'total_quizzes',
+        'midterm' => 'total_midterms',
+        'finals' => 'total_finals',
     ];
 }
 
 function assessment_default_max(string $type): int
 {
     return (int) (assessment_types()[$type]['default_max'] ?? 100);
+}
+
+function assessment_supports_group_mode(string $type): bool
+{
+    return in_array($type, ['activity', 'midterm', 'finals'], true);
+}
+
+function assessment_item_is_group(array $item): bool
+{
+    return assessment_supports_group_mode((string) ($item['type'] ?? ''))
+        && (string) ($item['activity_mode'] ?? 'individual') === 'group';
 }
 
 /**
@@ -46,19 +81,16 @@ function format_score($value): string
 
 /**
  * An item can be graded only once its required setup is complete: a title, a
- * scheduled date, a positive maximum score, and -- for Group Activities -- a
- * grouping actually assigned. (Activity Type itself is always set on the row,
- * defaulting to "individual", so there's nothing further to check for it here.)
+ * scheduled date, a positive maximum score, and -- for group-capable assessment
+ * items set to Group -- a grouping actually assigned. The mode itself is always
+ * set on the row, defaulting to "individual".
  */
 function is_assessment_item_gradeable(array $item): bool
 {
-    $isGroupActivity = (string) ($item['type'] ?? '') === 'activity'
-        && (string) ($item['activity_mode'] ?? 'individual') === 'group';
-
     return trim((string) ($item['title'] ?? '')) !== ''
         && !empty($item['scheduled_date'])
         && (float) ($item['max_score'] ?? 0) > 0
-        && (!$isGroupActivity || !empty($item['grouping_id']));
+        && (!assessment_item_is_group($item) || !empty($item['grouping_id']));
 }
 
 function ensure_assessment_schema(PDO $pdo): void
@@ -69,6 +101,8 @@ function ensure_assessment_schema(PDO $pdo): void
             class_id INT UNSIGNED NOT NULL,
             total_activities SMALLINT UNSIGNED DEFAULT NULL,
             total_quizzes SMALLINT UNSIGNED DEFAULT NULL,
+            total_midterms SMALLINT UNSIGNED DEFAULT NULL,
+            total_finals SMALLINT UNSIGNED DEFAULT NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -81,7 +115,7 @@ function ensure_assessment_schema(PDO $pdo): void
         'CREATE TABLE IF NOT EXISTS class_assessment_items (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT,
             class_id INT UNSIGNED NOT NULL,
-            type ENUM("activity","quiz") NOT NULL,
+            type ENUM("activity","quiz","midterm","finals") NOT NULL,
             position SMALLINT UNSIGNED NOT NULL,
             title VARCHAR(150) NOT NULL,
             max_score DECIMAL(6,2) NOT NULL DEFAULT 100,
@@ -99,6 +133,12 @@ function ensure_assessment_schema(PDO $pdo): void
     );
 
     // Migrations for databases created before these columns existed (MariaDB supports IF NOT EXISTS).
+    $pdo->exec('ALTER TABLE class_assessment_settings ADD COLUMN IF NOT EXISTS total_midterms SMALLINT UNSIGNED DEFAULT NULL AFTER total_quizzes');
+    $pdo->exec('ALTER TABLE class_assessment_settings ADD COLUMN IF NOT EXISTS total_finals SMALLINT UNSIGNED DEFAULT NULL AFTER total_midterms');
+    $typeColumn = $pdo->query("SHOW COLUMNS FROM class_assessment_items LIKE 'type'")->fetch();
+    if (!$typeColumn || strpos((string) ($typeColumn['Type'] ?? ''), "'midterm'") === false) {
+        $pdo->exec('ALTER TABLE class_assessment_items MODIFY COLUMN type ENUM("activity","quiz","midterm","finals") NOT NULL');
+    }
     $pdo->exec('ALTER TABLE class_assessment_items ADD COLUMN IF NOT EXISTS scheduled_date DATE DEFAULT NULL AFTER max_score');
     $pdo->exec('ALTER TABLE class_assessment_items ADD COLUMN IF NOT EXISTS activity_mode ENUM("individual","group") NOT NULL DEFAULT "individual" AFTER scheduled_date');
     $pdo->exec('ALTER TABLE class_assessment_items ADD COLUMN IF NOT EXISTS grouping_id INT UNSIGNED DEFAULT NULL AFTER activity_mode');
@@ -122,8 +162,9 @@ function ensure_assessment_schema(PDO $pdo): void
 
 function get_assessment_settings(PDO $pdo, int $classId): array
 {
+    $columns = assessment_setting_columns();
     $stmt = $pdo->prepare(
-        'SELECT total_activities, total_quizzes
+        'SELECT ' . implode(', ', array_values($columns)) . '
          FROM class_assessment_settings
          WHERE class_id = :class_id
          LIMIT 1'
@@ -131,15 +172,22 @@ function get_assessment_settings(PDO $pdo, int $classId): array
     $stmt->execute([':class_id' => $classId]);
     $row = $stmt->fetch();
 
-    return [
-        'activity' => ($row && $row['total_activities'] !== null) ? (int) $row['total_activities'] : null,
-        'quiz' => ($row && $row['total_quizzes'] !== null) ? (int) $row['total_quizzes'] : null,
-    ];
+    $settings = [];
+    foreach ($columns as $type => $column) {
+        $settings[$type] = ($row && $row[$column] !== null) ? (int) $row[$column] : null;
+    }
+
+    return $settings;
 }
 
 function save_assessment_total(PDO $pdo, int $classId, string $type, int $total): void
 {
-    $column = $type === 'quiz' ? 'total_quizzes' : 'total_activities';
+    $columns = assessment_setting_columns();
+    if (!isset($columns[$type])) {
+        return;
+    }
+
+    $column = $columns[$type];
     $stmt = $pdo->prepare(
         'INSERT INTO class_assessment_settings (class_id, ' . $column . ')
          VALUES (:class_id, :total)
@@ -415,6 +463,112 @@ function get_item_scores_map(PDO $pdo, int $itemId): array
     }
 
     return $map;
+}
+
+/**
+ * All scores for one assessment type in a single query, as [item_id][student_id] = score.
+ * Avoids N+1 when building a per-student summary across every item of a type.
+ */
+function get_class_type_scores(PDO $pdo, int $classId, string $type): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT cas.item_id, cas.student_id, cas.score
+         FROM class_assessment_scores cas
+         INNER JOIN class_assessment_items cai ON cai.id = cas.item_id
+         WHERE cai.class_id = :class_id AND cai.type = :type'
+    );
+    $stmt->execute([':class_id' => $classId, ':type' => $type]);
+
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $map[(int) $row['item_id']][(int) $row['student_id']] = (float) $row['score'];
+    }
+
+    return $map;
+}
+
+/** Human performance label for an average percentage (or null when ungraded). */
+function assessment_performance_label(?float $avgPct): array
+{
+    if ($avgPct === null) {
+        return ['label' => 'No scores yet', 'tone' => 'tone-slate'];
+    }
+    if ($avgPct >= 90) {
+        return ['label' => 'Excellent', 'tone' => 'tone-emerald'];
+    }
+    if ($avgPct >= 80) {
+        return ['label' => 'Very good', 'tone' => 'tone-emerald'];
+    }
+    if ($avgPct >= 70) {
+        return ['label' => 'Good', 'tone' => 'tone-amber'];
+    }
+    if ($avgPct >= 60) {
+        return ['label' => 'Fair', 'tone' => 'tone-amber'];
+    }
+    return ['label' => 'Needs improvement', 'tone' => 'tone-rose'];
+}
+
+/**
+ * Per-student summary of a class's assessments of one type, mirroring the shape
+ * of the attendance overview. Returns ['items' => [gradeable items], 'students' => [
+ *   id, student_no, student_name, history[{item,score,pct,max}], graded_count,
+ *   average_pct, highest, lowest (raw+pct), performance ]].
+ * Only gradeable items are included (title+date+max present).
+ */
+function build_student_assessment_overview(PDO $pdo, int $classId, string $type): array
+{
+    $allItems = get_assessment_items($pdo, $classId, $type);
+    $items = array_values(array_filter($allItems, 'is_assessment_item_gradeable'));
+    $scores = get_class_type_scores($pdo, $classId, $type);
+    $students = get_class_enrolled_students($pdo, $classId);
+
+    $out = [];
+    foreach ($students as $student) {
+        $sid = (int) $student['id'];
+        $history = [];
+        $pcts = [];
+        $bestPct = null;
+        $worstPct = null;
+        $best = null;
+        $worst = null;
+
+        foreach ($items as $item) {
+            $max = (float) $item['max_score'];
+            $score = $scores[(int) $item['id']][$sid] ?? null;
+            $pct = ($score !== null && $max > 0) ? max(0.0, min(100.0, ($score / $max) * 100)) : null;
+            if ($pct !== null) {
+                $pcts[] = $pct;
+                if ($bestPct === null || $pct > $bestPct) {
+                    $bestPct = $pct;
+                    $best = ['title' => $item['title'], 'score' => $score, 'max' => $max];
+                }
+                if ($worstPct === null || $pct < $worstPct) {
+                    $worstPct = $pct;
+                    $worst = ['title' => $item['title'], 'score' => $score, 'max' => $max];
+                }
+            }
+            $history[] = ['item' => $item, 'score' => $score, 'pct' => $pct, 'max' => $max];
+        }
+
+        $avgPct = $pcts ? array_sum($pcts) / count($pcts) : null;
+
+        $out[] = [
+            'id' => $sid,
+            'student_no' => (string) $student['student_no'],
+            'student_name' => (string) $student['student_name'],
+            'history' => $history,
+            'graded_count' => count($pcts),
+            'total_items' => count($items),
+            'average_pct' => $avgPct,
+            'highest' => $best,
+            'highest_pct' => $bestPct,
+            'lowest' => $worst,
+            'lowest_pct' => $worstPct,
+            'performance' => assessment_performance_label($avgPct),
+        ];
+    }
+
+    return ['items' => $items, 'students' => $out];
 }
 
 /**

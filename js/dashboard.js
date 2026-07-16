@@ -359,8 +359,9 @@
         }
     });
 
-    // Student history modals (attendance + participation share this list/detail pattern).
-    document.querySelectorAll('#studentAttendanceModal, #studentParticipationModal').forEach((modal) => {
+    // Student history modals (attendance, participation, and each assessment type
+    // share this list/detail pattern via the data-student-history-modal hook).
+    document.querySelectorAll('[data-student-history-modal]').forEach((modal) => {
         const showPanel = (target) => {
             modal.querySelectorAll('[data-student-panel]').forEach((panel) => {
                 panel.classList.remove('is-active');
@@ -588,14 +589,14 @@
         syncModeUi();
     });
 
-    // Activity setup: toggle group grouping options by mode + grouping source.
-    document.querySelectorAll('[data-activity-item-form]').forEach((form) => {
-        const groupingBlock = form.querySelector('[data-activity-grouping]');
+    // Assessment setup: toggle group grouping options by mode + grouping source.
+    document.querySelectorAll('[data-assessment-item-form]').forEach((form) => {
+        const groupingBlock = form.querySelector('[data-assessment-grouping]');
         const existingBlock = form.querySelector('[data-grouping-existing]');
         const newBlock = form.querySelector('[data-grouping-new]');
 
         const syncMode = () => {
-            const checked = form.querySelector('[data-activity-mode]:checked');
+            const checked = form.querySelector('[data-assessment-mode]:checked');
             if (groupingBlock) {
                 groupingBlock.hidden = !(checked && checked.value === 'group');
             }
@@ -612,7 +613,7 @@
             }
         };
 
-        form.querySelectorAll('[data-activity-mode]').forEach((input) => input.addEventListener('change', syncMode));
+        form.querySelectorAll('[data-assessment-mode]').forEach((input) => input.addEventListener('change', syncMode));
         form.querySelectorAll('[data-grouping-source]').forEach((input) => input.addEventListener('change', syncSource));
 
         syncMode();
@@ -694,27 +695,38 @@
             toastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 1600);
         };
 
-        // Re-render each group card's member pills + leader options from the server snapshot.
+        // Re-render each group card's member pills + leader options from the server
+        // snapshot, and re-sync the roster dropdowns so the group list AND the member
+        // list always reflect exactly what was saved.
         const renderGroups = (groups) => {
+            const studentGroup = {}; // student_id -> group_id from server truth
             groups.forEach((group) => {
                 const card = editor.querySelector('[data-group-card][data-group-id="' + group.id + '"]');
-                if (!card) {
-                    return;
+                if (card) {
+                    const membersEl = card.querySelector('[data-group-members]');
+                    if (membersEl) {
+                        membersEl.innerHTML = group.members.length
+                            ? group.members.map((m) => '<span class="status-pill small tone-slate">' + escapeHtml(m.name) + '</span>').join('')
+                            : '<span class="text-secondary small" data-empty-members>No members yet &mdash; assign below.</span>';
+                    }
+
+                    const leaderSel = card.querySelector('[data-group-leader]');
+                    if (leaderSel) {
+                        const current = String(group.leader || 0);
+                        leaderSel.innerHTML = '<option value="0">No leader</option>'
+                            + group.members.map((m) => '<option value="' + m.id + '"' + (String(m.id) === current ? ' selected' : '') + '>' + escapeHtml(m.name) + '</option>').join('');
+                    }
                 }
 
-                const membersEl = card.querySelector('[data-group-members]');
-                if (membersEl) {
-                    membersEl.innerHTML = group.members.length
-                        ? group.members.map((m) => '<span class="status-pill small tone-slate">' + escapeHtml(m.name) + '</span>').join('')
-                        : '<span class="text-secondary small" data-empty-members>No members yet &mdash; assign below.</span>';
-                }
+                group.members.forEach((m) => { studentGroup[String(m.id)] = String(group.id); });
+            });
 
-                const leaderSel = card.querySelector('[data-group-leader]');
-                if (leaderSel) {
-                    const current = String(group.leader || 0);
-                    leaderSel.innerHTML = '<option value="0">No leader</option>'
-                        + group.members.map((m) => '<option value="' + m.id + '"' + (String(m.id) === current ? ' selected' : '') + '>' + escapeHtml(m.name) + '</option>').join('');
-                }
+            // Keep every roster row's dropdown in step with the persisted assignment.
+            editor.querySelectorAll('[data-assign-student]').forEach((sel) => {
+                const sid = sel.getAttribute('data-assign-student');
+                const gid = studentGroup[sid] || '0';
+                sel.value = gid;
+                sel.setAttribute('data-prev', gid);
             });
         };
 
@@ -786,128 +798,60 @@
         });
     });
 
-    const gradingForm = document.querySelector('[data-grading-settings-form]');
+    // Grading Settings: live sum-to-100 total + dirty/saved feedback for the fixed
+    // 6-weight form.
+    const gradingForm = document.querySelector('[data-grading-weights-form]');
 
     if (gradingForm) {
-        const categoryList = gradingForm.querySelector('[data-grading-category-list]');
+        const trackedInputs = [...gradingForm.querySelectorAll('[data-grading-weight-input], [name="passing_grade"]')];
+        const weightInputs = [...gradingForm.querySelectorAll('[data-grading-weight-input]')];
         const totalOutput = gradingForm.querySelector('[data-grading-total]');
         const statusPanel = gradingForm.querySelector('[data-grading-status]');
         const messageOutput = gradingForm.querySelector('[data-grading-message]');
-        const saveButton = gradingForm.querySelector('[data-save-grading]');
-        let categoryCounter = 1;
+        const saveButton = gradingForm.querySelector('[data-grading-save]');
+        const dirtyIndicator = gradingForm.querySelector('[data-grading-dirty]');
+        const cleanIndicator = gradingForm.querySelector('[data-grading-clean]');
 
-        const buildSubcategory = () => {
-            const row = document.createElement('div');
-            row.className = 'grading-subcategory';
-            row.setAttribute('data-grading-subcategory', '');
-            row.innerHTML = `
-                <div class="grading-name-field">
-                    <label class="form-label">Subcategory</label>
-                    <input type="text" class="form-control" value="New subcategory" data-subcategory-name>
-                </div>
-                <div class="grading-weight-field">
-                    <label class="form-label">Weight</label>
-                    <div>
-                        <input type="number" class="form-control" value="0" min="0" max="100" step="1" data-subcategory-weight>
-                        <span>%</span>
-                    </div>
-                </div>
-                <button class="btn btn-copy btn-danger-soft" type="button" data-delete-subcategory aria-label="Delete subcategory"><i class="bi bi-trash"></i></button>
-            `;
-
-            return row;
-        };
-
-        const buildCategory = () => {
-            const category = document.createElement('div');
-            category.className = 'grading-category';
-            category.setAttribute('data-grading-category', '');
-            category.innerHTML = `
-                <div class="grading-category-row">
-                    <div class="grading-name-field">
-                        <label class="form-label">Category</label>
-                        <input type="text" class="form-control" value="New Category ${categoryCounter}" data-category-name>
-                    </div>
-                    <div class="grading-weight-field">
-                        <label class="form-label">Weight</label>
-                        <div>
-                            <input type="number" class="form-control" value="0" min="0" max="100" step="1" data-category-weight>
-                            <span>%</span>
-                        </div>
-                    </div>
-                    <div class="grading-row-actions">
-                        <button class="btn btn-copy" type="button" data-add-subcategory><i class="bi bi-plus-circle"></i> Subcategory</button>
-                        <button class="btn btn-copy btn-danger-soft" type="button" data-delete-category><i class="bi bi-trash"></i> Delete</button>
-                    </div>
-                </div>
-                <div class="grading-subcategory-list" data-grading-subcategory-list></div>
-                <p class="grading-category-error" data-category-error></p>
-            `;
-            categoryCounter += 1;
-
-            return category;
-        };
+        // Snapshot the initial values so we can tell when the form is dirty.
+        const baseline = trackedInputs.map((input) => input.value.trim());
+        let submitted = false;
 
         const numberFromInput = (input) => {
             const value = Number.parseFloat(input.value);
-
             return Number.isFinite(value) ? value : 0;
         };
 
+        const isDirty = () => trackedInputs.some((input, i) => input.value.trim() !== baseline[i]);
+
+        const updateDirtyState = () => {
+            if (submitted) {
+                return;
+            }
+            const dirty = isDirty();
+            if (dirtyIndicator) {
+                dirtyIndicator.hidden = !dirty;
+            }
+            if (cleanIndicator) {
+                cleanIndicator.hidden = dirty;
+            }
+        };
+
         const validateGrading = () => {
-            const categories = [...gradingForm.querySelectorAll('[data-grading-category]')];
-            const total = categories.reduce((sum, category) => {
-                const input = category.querySelector('[data-category-weight]');
-                return sum + (input ? numberFromInput(input) : 0);
-            }, 0);
-            const messages = [];
-            let hasInvalidChildTotals = false;
-
-            categories.forEach((category) => {
-                const categoryName = category.querySelector('[data-category-name]')?.value || 'Category';
-                const parentWeight = numberFromInput(category.querySelector('[data-category-weight]'));
-                const subcategoryInputs = [...category.querySelectorAll('[data-subcategory-weight]')];
-                const subcategoryTotal = subcategoryInputs.reduce((sum, input) => sum + numberFromInput(input), 0);
-                const error = category.querySelector('[data-category-error]');
-                const hasMismatch = subcategoryInputs.length > 0 && subcategoryTotal !== parentWeight;
-
-                category.classList.toggle('is-invalid', hasMismatch);
-
-                if (error) {
-                    error.textContent = hasMismatch
-                        ? `${categoryName} subcategories total ${subcategoryTotal}%, but the category weight is ${parentWeight}%.`
-                        : '';
-                }
-
-                if (hasMismatch) {
-                    hasInvalidChildTotals = true;
-                }
-            });
-
-            if (total !== 100) {
-                messages.push(`Top-level categories total ${total}%. Adjust weights to equal 100%.`);
-            }
-
-            if (hasInvalidChildTotals) {
-                messages.push('Subcategory totals must match their parent category weights.');
-            }
-
-            const isValid = messages.length === 0;
+            const total = weightInputs.reduce((sum, input) => sum + numberFromInput(input), 0);
+            const rounded = Math.round(total * 100) / 100;
+            const isValid = rounded === 100;
 
             if (totalOutput) {
-                totalOutput.textContent = String(total);
+                totalOutput.textContent = String(rounded);
             }
-
             if (statusPanel) {
                 statusPanel.classList.toggle('is-invalid', !isValid);
             }
-
             if (messageOutput) {
                 messageOutput.textContent = isValid
-                    ? 'Weights are valid. Total grading weight is 100%.'
-                    : messages.join(' ');
+                    ? 'Weights total exactly 100%. Ready to save.'
+                    : `Component weights total ${rounded}%. Adjust them to equal 100%.`;
             }
-
             if (saveButton) {
                 saveButton.disabled = !isValid;
             }
@@ -915,47 +859,19 @@
             return isValid;
         };
 
-        gradingForm.addEventListener('input', validateGrading);
-
-        gradingForm.addEventListener('click', (event) => {
-            const target = event.target.closest('button');
-
-            if (!target) {
-                return;
-            }
-
-            if (target.matches('[data-add-category]')) {
-                categoryList.appendChild(buildCategory());
-                validateGrading();
-            }
-
-            if (target.matches('[data-add-subcategory]')) {
-                const category = target.closest('[data-grading-category]');
-                const list = category?.querySelector('[data-grading-subcategory-list]');
-
-                if (list) {
-                    list.appendChild(buildSubcategory());
-                    validateGrading();
-                }
-            }
-
-            if (target.matches('[data-delete-category]')) {
-                target.closest('[data-grading-category]')?.remove();
-                validateGrading();
-            }
-
-            if (target.matches('[data-delete-subcategory]')) {
-                target.closest('[data-grading-subcategory]')?.remove();
-                validateGrading();
-            }
+        gradingForm.addEventListener('input', () => {
+            validateGrading();
+            updateDirtyState();
         });
 
-        gradingForm.addEventListener('submit', (event) => {
-            event.preventDefault();
-            validateGrading();
+        gradingForm.addEventListener('submit', () => {
+            submitted = true;
+            if (dirtyIndicator) { dirtyIndicator.hidden = true; }
+            if (cleanIndicator) { cleanIndicator.hidden = true; }
         });
 
         validateGrading();
+        updateDirtyState();
     }
 
     const autoOpenModals = document.querySelectorAll('[data-auto-open-modal]');

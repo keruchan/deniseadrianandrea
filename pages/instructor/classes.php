@@ -7,6 +7,8 @@ require_once __DIR__ . '/../../includes/attendance_management.php';
 require_once __DIR__ . '/../../includes/participation_management.php';
 require_once __DIR__ . '/../../includes/assessment_management.php';
 require_once __DIR__ . '/../../includes/grouping_management.php';
+require_once __DIR__ . '/../../includes/insights_management.php';
+require_once __DIR__ . '/../../includes/insights_render.php';
 require_once __DIR__ . '/../../includes/dashboard_layout.php';
 
 require_role('instructor');
@@ -20,13 +22,14 @@ ensure_attendance_schema($pdo);
 ensure_participation_schema($pdo);
 ensure_assessment_schema($pdo);
 ensure_grouping_schema($pdo);
+ensure_insights_schema($pdo);
 
 $errors = [];
 $successMessage = '';
 $formData = class_form_defaults();
 $scheduleData = attendance_schedule_defaults();
-$assessmentTotals = ['activity' => null, 'quiz' => null];
-$assessmentTotalsInput = ['activity' => '', 'quiz' => ''];
+$assessmentTotals = array_fill_keys(array_keys(assessment_types()), null);
+$assessmentTotalsInput = array_fill_keys(array_keys(assessment_types()), '');
 $autoOpenModal = '';
 $editTargetClassId = 0;
 $editTargetItemId = 0;
@@ -57,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $scheduleData = attendance_schedule_data_from_array($_POST);
         $errors = array_merge($errors, validate_attendance_schedule_data($scheduleData));
 
-        foreach (['activity' => 'total_activities', 'quiz' => 'total_quizzes'] as $totalType => $totalField) {
+        foreach (assessment_setting_columns() as $totalType => $totalField) {
             [$totalValue, $totalProvided, $totalError] = assessment_total_from_input($_POST[$totalField] ?? '');
 
             if ($totalError !== null) {
@@ -447,23 +450,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $itemClassId = (int) $assessmentItem['class_id'];
                     $itemType = (string) $assessmentItem['type'];
+                    $typeMeta = assessment_types()[$itemType];
+                    $supportsGroupMode = assessment_supports_group_mode($itemType);
                     $groupingRef = null;
                     $createdManualGrouping = false;
 
-                    // Activity Type is only meaningful for activities (quizzes are always
-                    // individual), but the UI always submits one of the two radios -- guard
-                    // explicitly in case the field is ever omitted or tampered with.
-                    if ($itemType === 'activity' && $assessmentItemModeRaw === null) {
-                        $msg = 'Select an activity type.';
+                    // Quizzes remain individual. Activities, Midterms, and Finals require
+                    // an explicit Individual/Group mode selection before they can be graded.
+                    if ($supportsGroupMode && $assessmentItemModeRaw === null) {
+                        $msg = 'Select an assessment type.';
                         $errors[] = $msg;
                         $itemFieldErrors['mode'] = $msg;
                     }
 
-                    // Group activities must reference a grouping: either an existing class
-                    // grouping or a newly created activity-specific one (which never overwrites
-                    // class groupings). This is required to complete setup -- without it the
-                    // item cannot be marked Ready or used for grading.
-                    if ($itemType === 'activity' && $assessmentItemMode === 'group') {
+                    // Group-capable assessments must reference a grouping: either an existing
+                    // class grouping or a newly created item-specific one (which never
+                    // overwrites class groupings).
+                    if ($supportsGroupMode && $assessmentItemMode === 'group') {
                         $groupingSource = (string) ($_POST['item_grouping_source'] ?? 'existing');
 
                         if ($groupingSource === 'new') {
@@ -492,12 +495,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         } elseif (!empty($assessmentItem['grouping_id'])) {
                             // No explicit selection was submitted -- e.g. no class groupings
                             // exist to choose from, only the "existing" panel's info message --
-                            // but the item already has a grouping attached (possibly activity-
+                            // but the item already has a grouping attached (possibly item-
                             // specific, which the class-scoped dropdown doesn't list). Keep it
                             // rather than forcing a re-selection on every unrelated edit.
                             $groupingRef = (int) $assessmentItem['grouping_id'];
                         } else {
-                            $msg = 'Select a class grouping, or choose "Create activity-specific grouping".';
+                            $msg = 'Select a default class grouping, or choose "Create activity-specific grouping".';
                             $errors[] = $msg;
                             $itemFieldErrors['grouping'] = $msg;
                         }
@@ -509,11 +512,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'max_score' => $assessmentItemMax,
                             'scheduled_date' => $assessmentItemDate,
                             'description' => $assessmentItemDescription,
-                            'activity_mode' => $itemType === 'activity' ? $assessmentItemMode : 'individual',
+                            'activity_mode' => $supportsGroupMode ? $assessmentItemMode : 'individual',
                             'grouping_id' => $groupingRef,
                         ]);
                         delete_orphan_activity_groupings($pdo, $assessmentItemId, (int) $groupingRef);
-                        $typeMeta = assessment_types()[$itemType];
 
                         rotate_csrf_token('csrf_class_manage_token');
 
@@ -537,7 +539,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $itemClassId = (int) $gradeItem['class_id'];
                     $typeMeta = assessment_types()[(string) $gradeItem['type']];
-                    $skipped = save_assessment_scores($pdo, $gradeItemId, $itemClassId, (float) $gradeItem['max_score'], $_POST['score'] ?? []);
+                    $itemMax = (float) $gradeItem['max_score'];
+
+                    // Determine which students are newly graded / changed (before saving),
+                    // so we only notify those students — not everyone on every re-save.
+                    $existingScores = get_item_scores_map($pdo, $gradeItemId);
+                    $changedStudentIds = [];
+                    foreach (($_POST['score'] ?? []) as $sid => $raw) {
+                        $raw = trim((string) $raw);
+                        if ($raw === '' || !is_numeric($raw)) {
+                            continue;
+                        }
+                        $val = (float) $raw;
+                        if ($val < 0 || $val > $itemMax) {
+                            continue;
+                        }
+                        $old = $existingScores[(int) $sid] ?? null;
+                        if ($old === null || abs((float) $old - $val) > 0.0001) {
+                            $changedStudentIds[] = (int) $sid;
+                        }
+                    }
+
+                    $skipped = save_assessment_scores($pdo, $gradeItemId, $itemClassId, $itemMax, $_POST['score'] ?? []);
+
+                    if (!empty($changedStudentIds)) {
+                        $classNameStmt = $pdo->prepare('SELECT class_name FROM classes WHERE id = :id LIMIT 1');
+                        $classNameStmt->execute([':id' => $itemClassId]);
+                        $itemClassName = (string) ($classNameStmt->fetchColumn() ?: 'your class');
+                        notify_students_of_grade(
+                            $pdo,
+                            $changedStudentIds,
+                            (string) $gradeItem['title'],
+                            $itemClassName,
+                            url_for('pages/student/class-insights.php') . '?class_id=' . $itemClassId . '&tab=grades'
+                        );
+                    }
 
                     rotate_csrf_token('csrf_class_manage_token');
                     $_SESSION['class_success'] = 'Grades saved successfully.'
@@ -548,10 +584,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif ($postedAction === 'assessment_assign_grouping') {
                 $assignItem = assessment_item_belongs_to_instructor($pdo, $assignItemId, $instructorId);
 
-                if (!$assignItem || (string) $assignItem['type'] !== 'activity' || (string) $assignItem['activity_mode'] !== 'group') {
-                    $errors[] = 'Group activity not found.';
+                if (!$assignItem) {
+                    $errors[] = 'Group assessment not found.';
+                } elseif (!assessment_supports_group_mode((string) $assignItem['type']) || (string) $assignItem['activity_mode'] !== 'group') {
+                    $errors[] = 'Group assessment not found.';
                 } else {
                     $itemClassId = (int) $assignItem['class_id'];
+                    $typeMeta = assessment_types()[(string) $assignItem['type']];
                     $assignedGroupingId = 0;
 
                     if ($assignSource === 'new') {
@@ -580,11 +619,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $newIsManual = $assignSource === 'new' && ($assignConfig['method'] ?? '') === 'manual';
                         if ($newIsManual) {
                             $_SESSION['class_success'] = 'Manual grouping created. Assign students to their groups below.';
-                            redirect_to('classes/' . $itemClassId . '/activities?item=' . $assignItemId . '&manage_groups=1');
+                            redirect_to('classes/' . $itemClassId . '/' . $typeMeta['view'] . '?item=' . $assignItemId . '&manage_groups=1');
                         }
 
-                        $_SESSION['class_success'] = 'Grouping assigned. You can now grade this group activity.';
-                        redirect_to('classes/' . $itemClassId . '/activities?item=' . $assignItemId);
+                        $_SESSION['class_success'] = 'Grouping assigned. You can now grade this group assessment.';
+                        redirect_to('classes/' . $itemClassId . '/' . $typeMeta['view'] . '?item=' . $assignItemId);
                     }
                 }
             } elseif ($postedAction === 'grouping_create') {
@@ -819,26 +858,26 @@ function render_teaching_schedule_fields(array $scheduleData, string $idPrefix):
     <?php
 }
 
-function render_assessment_config_fields(string $activityValue, string $quizValue, string $idPrefix): void
+function render_assessment_config_fields(array $values, string $idPrefix): void
 {
+    $columns = assessment_setting_columns();
     ?>
     <div class="teaching-schedule-block">
         <div class="section-heading compact">
-            <h2>Activities &amp; Quizzes</h2>
+            <h2>Assessments</h2>
             <span>Optional - can be set later</span>
         </div>
 
         <div class="form-grid">
-            <div class="field">
-                <label for="<?php echo e($idPrefix); ?>total_activities" class="form-label">Total activities</label>
-                <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>total_activities" name="total_activities" value="<?php echo e($activityValue); ?>" min="1" max="200" step="1" placeholder="Leave blank to set later">
-            </div>
-            <div class="field">
-                <label for="<?php echo e($idPrefix); ?>total_quizzes" class="form-label">Total quizzes</label>
-                <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>total_quizzes" name="total_quizzes" value="<?php echo e($quizValue); ?>" min="1" max="200" step="1" placeholder="Leave blank to set later">
-            </div>
+            <?php foreach (assessment_types() as $type => $meta): ?>
+                <?php $fieldName = $columns[$type]; ?>
+                <div class="field">
+                    <label for="<?php echo e($idPrefix . $fieldName); ?>" class="form-label">Total <?php echo e(strtolower($meta['plural'])); ?></label>
+                    <input type="number" class="form-control" id="<?php echo e($idPrefix . $fieldName); ?>" name="<?php echo e($fieldName); ?>" value="<?php echo e((string) ($values[$type] ?? '')); ?>" min="1" max="200" step="1" placeholder="Leave blank to set later">
+                </div>
+            <?php endforeach; ?>
         </div>
-        <p class="participation-hint"><i class="bi bi-info-circle"></i> Items are generated automatically (Activity 1&hellip;N, Quiz 1&hellip;N) and can be renamed later. Graded items are never removed automatically.</p>
+        <p class="participation-hint"><i class="bi bi-info-circle"></i> Items are generated automatically, can be renamed later, and graded items are never removed automatically.</p>
     </div>
     <?php
 }
@@ -1235,7 +1274,7 @@ function render_attendance_workspace(PDO $pdo, int $instructorId, array $class, 
 function render_student_attendance_modal(int $classId, array $studentOverview, array $meetings, array $attendanceMatrix, array $recordStatusMeta, array $visualStateMeta): void
 {
     ?>
-    <div class="modal fade" id="studentAttendanceModal" tabindex="-1" aria-labelledby="studentAttendanceModalLabel" aria-hidden="true">
+    <div class="modal fade" id="studentAttendanceModal" tabindex="-1" aria-labelledby="studentAttendanceModalLabel" aria-hidden="true" data-student-history-modal>
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
@@ -1697,7 +1736,7 @@ function render_student_picker_modal(array $meeting, array $pickerStudents, int 
 function render_student_participation_modal(int $classId, array $studentOverview, array $meetings, array $participationMatrix, array $visualStateMeta, int $maxScore): void
 {
     ?>
-    <div class="modal fade" id="studentParticipationModal" tabindex="-1" aria-labelledby="studentParticipationModalLabel" aria-hidden="true">
+    <div class="modal fade" id="studentParticipationModal" tabindex="-1" aria-labelledby="studentParticipationModalLabel" aria-hidden="true" data-student-history-modal>
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
@@ -1815,16 +1854,19 @@ function render_edit_class_modal(PDO $pdo, array $class, string $csrfToken, arra
     ];
     $editScheduleData = get_class_teaching_schedule($pdo, $classId);
     $assessmentSettings = get_assessment_settings($pdo, $classId);
-    $activityValue = $assessmentSettings['activity'] !== null ? (string) $assessmentSettings['activity'] : '';
-    $quizValue = $assessmentSettings['quiz'] !== null ? (string) $assessmentSettings['quiz'] : '';
+    $assessmentValues = [];
+    foreach (assessment_types() as $type => $meta) {
+        $assessmentValues[$type] = $assessmentSettings[$type] !== null ? (string) $assessmentSettings[$type] : '';
+    }
 
     $repopulate = $postedAction === 'edit' && $editTargetClassId === $classId && !empty($errors);
 
     if ($repopulate) {
         $editFormData = !empty($postedFormData) ? $postedFormData : $editFormData;
         $editScheduleData = !empty($postedScheduleData) ? $postedScheduleData : $editScheduleData;
-        $activityValue = (string) ($postedTotalsInput['activity'] ?? $activityValue);
-        $quizValue = (string) ($postedTotalsInput['quiz'] ?? $quizValue);
+        foreach (assessment_types() as $type => $meta) {
+            $assessmentValues[$type] = (string) ($postedTotalsInput[$type] ?? $assessmentValues[$type]);
+        }
     }
     ?>
     <div class="modal fade" id="editClassModal-<?php echo e((string) $classId); ?>" tabindex="-1" aria-labelledby="editClassModalLabel-<?php echo e((string) $classId); ?>" aria-hidden="true">
@@ -1891,7 +1933,7 @@ function render_edit_class_modal(PDO $pdo, array $class, string $csrfToken, arra
                         </div>
 
                         <?php render_teaching_schedule_fields($editScheduleData, 'edit_' . $classId . '_'); ?>
-                        <?php render_assessment_config_fields($activityValue, $quizValue, 'edit_' . $classId . '_'); ?>
+                        <?php render_assessment_config_fields($assessmentValues, 'edit_' . $classId . '_'); ?>
                     </div>
 
                     <div class="modal-footer">
@@ -1908,6 +1950,7 @@ function render_edit_class_modal(PDO $pdo, array $class, string $csrfToken, arra
 function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array $typeMeta, string $type, string $csrfToken, array $classGroupings, array $itemFieldErrors = []): void
 {
     $itemId = (int) $item['id'];
+    $supportsGroupMode = assessment_supports_group_mode($type);
 
     // On a failed save, repopulate the modal from exactly what the instructor submitted
     // (not the unchanged DB row) so their in-progress edits aren't lost, and so the inline
@@ -1929,11 +1972,11 @@ function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array
                 <div class="modal-header">
                     <div>
                         <h2 class="modal-title h5" id="editAssessmentItemModalLabel-<?php echo e((string) $itemId); ?>">Set up <?php echo e($typeMeta['label']); ?></h2>
-                        <p class="mb-0 text-secondary small">Title, date, maximum score<?php echo $type === 'activity' ? ', activity type, and a grouping (for Group Activities)' : ''; ?> are required before grading. Recorded scores stay attached.</p>
+                        <p class="mb-0 text-secondary small">Title, date, maximum score<?php echo $supportsGroupMode ? ', assessment type, and a grouping (for group assessments)' : ''; ?> are required before grading. Recorded scores stay attached.</p>
                     </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <form method="post" action="<?php echo e(instructor_class_route($classId, $typeMeta['view'])); ?>" novalidate<?php echo $type === 'activity' ? ' data-activity-item-form' : ''; ?>>
+                <form method="post" action="<?php echo e(instructor_class_route($classId, $typeMeta['view'])); ?>" novalidate<?php echo $supportsGroupMode ? ' data-assessment-item-form' : ''; ?>>
                     <div class="modal-body">
                         <?php if ($isRepost): ?>
                             <div class="alert alert-danger" role="alert">
@@ -1971,33 +2014,33 @@ function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array
                             </div>
                         </div>
 
-                        <?php if ($type === 'activity'): ?>
+                        <?php if ($supportsGroupMode): ?>
                             <div class="assessment-mode-block">
                                 <div class="section-heading compact">
-                                    <h2>Activity type</h2>
+                                    <h2>Assessment type</h2>
                                     <span>Individual or group &mdash; required</span>
                                 </div>
-                                <div class="picker-mode" role="radiogroup" aria-label="Activity type">
+                                <div class="picker-mode" role="radiogroup" aria-label="Assessment type">
                                     <label class="picker-mode-option">
-                                        <input type="radio" name="item_mode" value="individual" <?php echo $mode !== 'group' ? 'checked' : ''; ?> data-activity-mode>
-                                        <span><i class="bi bi-person"></i> Individual Activity</span>
+                                        <input type="radio" name="item_mode" value="individual" <?php echo $mode !== 'group' ? 'checked' : ''; ?> data-assessment-mode>
+                                        <span><i class="bi bi-person"></i> Individual <?php echo e($typeMeta['label']); ?></span>
                                     </label>
                                     <label class="picker-mode-option">
-                                        <input type="radio" name="item_mode" value="group" <?php echo $mode === 'group' ? 'checked' : ''; ?> data-activity-mode>
-                                        <span><i class="bi bi-people"></i> Group Activity</span>
+                                        <input type="radio" name="item_mode" value="group" <?php echo $mode === 'group' ? 'checked' : ''; ?> data-assessment-mode>
+                                        <span><i class="bi bi-people"></i> Group <?php echo e($typeMeta['label']); ?></span>
                                     </label>
                                 </div>
                                 <?php if (isset($itemFieldErrors['mode'])): ?><div class="field-error"><?php echo e($itemFieldErrors['mode']); ?></div><?php endif; ?>
 
-                                <div class="activity-grouping-block" data-activity-grouping <?php echo $mode === 'group' ? '' : 'hidden'; ?>>
+                                <div class="activity-grouping-block" data-assessment-grouping <?php echo $mode === 'group' ? '' : 'hidden'; ?>>
                                     <div class="picker-mode" role="radiogroup" aria-label="Grouping source">
                                         <label class="picker-mode-option">
                                             <input type="radio" name="item_grouping_source" value="existing" <?php echo $groupingSource !== 'new' ? 'checked' : ''; ?> data-grouping-source>
-                                            <span><i class="bi bi-diagram-3"></i> Use existing class grouping</span>
+                                            <span><i class="bi bi-diagram-3"></i> Use Default Class Grouping</span>
                                         </label>
                                         <label class="picker-mode-option">
                                             <input type="radio" name="item_grouping_source" value="new" <?php echo $groupingSource === 'new' ? 'checked' : ''; ?> data-grouping-source>
-                                            <span><i class="bi bi-plus-circle"></i> Create activity-specific grouping</span>
+                                            <span><i class="bi bi-plus-circle"></i> Create Activity-Specific Grouping</span>
                                         </label>
                                     </div>
                                     <?php if (isset($itemFieldErrors['grouping'])): ?><div class="field-error"><?php echo e($itemFieldErrors['grouping']); ?></div><?php endif; ?>
@@ -2017,7 +2060,7 @@ function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array
 
                                     <div data-grouping-new hidden>
                                         <?php render_grouping_config_fields('act_' . $itemId . '_'); ?>
-                                        <p class="participation-hint"><i class="bi bi-info-circle"></i> This grouping is saved only for this activity and never overwrites class groupings.</p>
+                                        <p class="participation-hint"><i class="bi bi-info-circle"></i> This grouping is saved only for this assessment item and never overwrites class groupings.</p>
                                     </div>
                                 </div>
                             </div>
@@ -2034,14 +2077,35 @@ function render_assessment_item_modal(PDO $pdo, int $classId, array $item, array
     <?php
 }
 
+/**
+ * Renders a student's attendance status for the assessment date as a colored pill.
+ * $attendance is the array from get_attendance_status_for_date(); pass the student id.
+ * Shows nothing meaningful when no meeting exists on the date (keeps grading usable).
+ */
+function render_grade_attendance_pill(array $attendance, int $studentId): void
+{
+    if (!$attendance['has_meeting']) {
+        echo '<span class="grade-attendance-pill status-pill small tone-slate" title="No class meeting on the assessment date"><i class="bi bi-dash-circle"></i> No meeting</span>';
+        return;
+    }
+    $status = $attendance['statuses'][$studentId] ?? null;
+    if ($status === null) {
+        echo '<span class="grade-attendance-pill status-pill small tone-slate"><i class="bi bi-question-circle"></i> Not recorded</span>';
+        return;
+    }
+    $meta = attendance_record_status_meta()[$status] ?? ['label' => ucfirst($status), 'icon' => 'bi-info-circle'];
+    echo '<span class="grade-attendance-pill status-pill small status-' . e($status) . '"><i class="bi ' . e($meta['icon']) . '"></i> ' . e($meta['label']) . '</span>';
+}
+
 function render_assessment_grading(PDO $pdo, array $class, array $item, array $typeMeta, string $csrfToken, array $errors, string $successMessage): void
 {
     $classId = (int) $class['id'];
     $itemId = (int) $item['id'];
     $maxScore = (float) $item['max_score'];
     $maxValue = format_score($item['max_score']);
-    $isGroup = (string) $item['type'] === 'activity' && (string) ($item['activity_mode'] ?? 'individual') === 'group';
+    $isGroup = assessment_item_is_group($item);
     $backUrl = instructor_class_route($classId, $typeMeta['view']);
+    $attendance = get_attendance_status_for_date($pdo, $classId, (string) ($item['scheduled_date'] ?? ''));
     ?>
     <section class="class-section mt-4">
         <?php if ($successMessage !== ''): ?>
@@ -2065,7 +2129,7 @@ function render_assessment_grading(PDO $pdo, array $class, array $item, array $t
         <div class="class-context-meta">
             <span><i class="bi bi-calendar-event"></i><?php echo e(date('M j, Y', strtotime((string) $item['scheduled_date']))); ?></span>
             <span><i class="bi bi-bullseye"></i>Max score <?php echo e($maxValue); ?></span>
-            <span><i class="bi <?php echo $isGroup ? 'bi-people' : 'bi-person'; ?>"></i><?php echo $isGroup ? 'Group activity' : 'Individual'; ?></span>
+            <span><i class="bi <?php echo $isGroup ? 'bi-people' : 'bi-person'; ?>"></i><?php echo $isGroup ? 'Group ' . e($typeMeta['label']) : 'Individual'; ?></span>
         </div>
 
         <?php if ($isGroup): ?>
@@ -2089,6 +2153,7 @@ function render_assessment_grading(PDO $pdo, array $class, array $item, array $t
                                         <strong><?php echo e($student['student_name']); ?></strong>
                                         <small><?php echo e($student['student_no'] ?: 'No student number'); ?></small>
                                     </span>
+                                    <?php render_grade_attendance_pill($attendance, (int) $student['id']); ?>
                                     <span class="grading-score-field">
                                         <input type="number" class="form-control" name="score[<?php echo e((string) $student['id']); ?>]" value="<?php echo e($student['item_score'] !== null ? format_score($student['item_score']) : ''); ?>" min="0" max="<?php echo e($maxValue); ?>" step="0.25" placeholder="&mdash;" data-grade-input aria-label="Score for <?php echo e($student['student_name']); ?>">
                                         <span class="grading-score-max">/ <?php echo e($maxValue); ?></span>
@@ -2112,8 +2177,9 @@ function render_group_grading_form(PDO $pdo, int $classId, array $item, float $m
     $itemId = (int) $item['id'];
     $groupingId = (int) ($item['grouping_id'] ?? 0);
     $grouping = $groupingId > 0 ? get_grouping_with_groups($pdo, $groupingId) : [];
+    $attendance = get_attendance_status_for_date($pdo, $classId, (string) ($item['scheduled_date'] ?? ''));
 
-    // A group activity cannot be graded until it has a grouping. Require the
+    // A group assessment cannot be graded until it has a grouping. Require the
     // instructor to select an existing class grouping or create an activity-specific
     // one right here before the group grading sheet appears.
     if ($groupingId <= 0 || empty($grouping)) {
@@ -2121,8 +2187,8 @@ function render_group_grading_form(PDO $pdo, int $classId, array $item, float $m
         ?>
         <div class="assessment-config-state mt-4">
             <i class="bi bi-diagram-3"></i>
-            <h3>This group activity needs a grouping before grading.</h3>
-            <p>Select an existing class grouping or create an activity-specific grouping (saved only for this activity).</p>
+            <h3>This group <?php echo e(strtolower($typeMeta['label'])); ?> needs a grouping before grading.</h3>
+            <p>Select an existing class grouping or create an activity-specific grouping (saved only for this assessment item).</p>
         </div>
 
         <form method="post" action="<?php echo e(instructor_class_route($classId, $typeMeta['view']) . '?item=' . $itemId); ?>" class="grouping-assign-form mt-3" data-grouping-assign novalidate>
@@ -2133,11 +2199,11 @@ function render_group_grading_form(PDO $pdo, int $classId, array $item, float $m
             <div class="picker-mode" role="radiogroup" aria-label="Grouping source">
                 <label class="picker-mode-option">
                     <input type="radio" name="grouping_source" value="existing" checked data-grouping-source>
-                    <span><i class="bi bi-diagram-3"></i> Use existing class grouping</span>
+                    <span><i class="bi bi-diagram-3"></i> Use Default Class Grouping</span>
                 </label>
                 <label class="picker-mode-option">
                     <input type="radio" name="grouping_source" value="new" data-grouping-source>
-                    <span><i class="bi bi-plus-circle"></i> Create activity-specific grouping</span>
+                    <span><i class="bi bi-plus-circle"></i> Create Activity-Specific Grouping</span>
                 </label>
             </div>
 
@@ -2215,9 +2281,10 @@ function render_group_grading_form(PDO $pdo, int $classId, array $item, float $m
                             <?php foreach ($members as $member): ?>
                                 <?php $existing = $scores[(int) $member['student_id']] ?? null; ?>
                                 <div class="group-grade-member">
-                                    <span>
+                                    <span class="group-grade-member-identity">
                                         <strong><?php echo e($member['student_name']); ?></strong>
                                         <?php if ((int) $group['leader_student_id'] === (int) $member['student_id']): ?><span class="status-pill small tone-indigo group-leader-badge"><i class="bi bi-star-fill"></i> Leader</span><?php endif; ?>
+                                        <?php render_grade_attendance_pill($attendance, (int) $member['student_id']); ?>
                                     </span>
                                     <input type="number" class="form-control" name="score[<?php echo e((string) $member['student_id']); ?>]" value="<?php echo e($existing !== null ? format_score($existing) : ''); ?>" min="0" max="<?php echo e($maxValue); ?>" step="0.25" placeholder="&mdash;" data-group-member-score aria-label="Score for <?php echo e($member['student_name']); ?>">
                                 </div>
@@ -2234,6 +2301,104 @@ function render_group_grading_form(PDO $pdo, int $classId, array $item, float $m
     <?php
 }
 
+/**
+ * "View Student {Type}" modal — per-student assessment summary (history, average,
+ * highest/lowest, overall performance), mirroring the Student Attendance modal.
+ * Shares the list/detail panel JS via the data-student-history-modal hook.
+ */
+function render_student_assessment_modal(int $classId, string $type, array $typeMeta, array $overview): void
+{
+    $modalId = 'studentAssessmentModal-' . $type;
+    $students = $overview['students'];
+    ?>
+    <div class="modal fade" id="<?php echo e($modalId); ?>" tabindex="-1" aria-labelledby="<?php echo e($modalId); ?>Label" aria-hidden="true" data-student-history-modal>
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h2 class="modal-title h5" id="<?php echo e($modalId); ?>Label">Student <?php echo e($typeMeta['plural']); ?></h2>
+                        <p class="mb-0 text-secondary small">Select a student to view their <?php echo e(strtolower($typeMeta['label'])); ?> history and performance.</p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="student-attendance-panel is-active" data-student-panel="list">
+                        <?php if (empty($students)): ?>
+                            <div class="empty-state large"><i class="bi bi-people"></i><span>No enrolled students yet.</span></div>
+                        <?php else: ?>
+                            <div data-student-search-scope>
+                                <?php render_student_search_bar(); ?>
+                                <div class="student-overview-list" data-student-search-list>
+                                    <?php foreach ($students as $student): ?>
+                                        <button type="button" class="student-overview-row" data-student-select="<?php echo e((string) $student['id']); ?>" data-search-terms="<?php echo e($student['student_name'] . ' ' . $student['student_no']); ?>">
+                                            <span class="student-overview-identity">
+                                                <strong><?php echo e($student['student_name']); ?></strong>
+                                                <small><?php echo e($student['student_no'] ?: 'No student number'); ?></small>
+                                            </span>
+                                            <span class="student-overview-rate">
+                                                <?php if ($student['average_pct'] === null): ?>
+                                                    <span class="status-pill small tone-slate">No scores yet</span>
+                                                <?php else: ?>
+                                                    <span class="status-pill small <?php echo e($student['performance']['tone']); ?>"><?php echo e(number_format($student['average_pct'], 1)); ?>% avg</span>
+                                                    <small><?php echo (int) $student['graded_count']; ?> / <?php echo (int) $student['total_items']; ?> graded</small>
+                                                <?php endif; ?>
+                                            </span>
+                                            <i class="bi bi-chevron-right"></i>
+                                        </button>
+                                    <?php endforeach; ?>
+                                </div>
+                                <?php render_student_search_empty(); ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php foreach ($students as $student): ?>
+                        <div class="student-attendance-panel" data-student-panel="detail" data-student-id="<?php echo e((string) $student['id']); ?>">
+                            <button type="button" class="btn btn-copy mb-3" data-student-back><i class="bi bi-arrow-left"></i> All students</button>
+
+                            <div class="student-detail-header">
+                                <div>
+                                    <strong><?php echo e($student['student_name']); ?></strong>
+                                    <small><?php echo e($student['student_no'] ?: 'No student number'); ?></small>
+                                </div>
+                                <span class="status-pill <?php echo e($student['performance']['tone']); ?>"><i class="bi bi-graph-up"></i> <?php echo e($student['performance']['label']); ?></span>
+                            </div>
+
+                            <div class="metric-grid student-assessment-stats">
+                                <article class="metric-card"><div><div class="metric-label">Average</div><div class="metric-value"><?php echo $student['average_pct'] !== null ? e(number_format($student['average_pct'], 1)) . '%' : '&mdash;'; ?></div></div></article>
+                                <article class="metric-card tone-emerald"><div><div class="metric-label">Highest</div><div class="metric-value"><?php echo $student['highest_pct'] !== null ? e(number_format($student['highest_pct'], 1)) . '%' : '&mdash;'; ?></div><?php if ($student['highest']): ?><div class="metric-note"><?php echo e($student['highest']['title']); ?></div><?php endif; ?></div></article>
+                                <article class="metric-card tone-rose"><div><div class="metric-label">Lowest</div><div class="metric-value"><?php echo $student['lowest_pct'] !== null ? e(number_format($student['lowest_pct'], 1)) . '%' : '&mdash;'; ?></div><?php if ($student['lowest']): ?><div class="metric-note"><?php echo e($student['lowest']['title']); ?></div><?php endif; ?></div></article>
+                                <article class="metric-card"><div><div class="metric-label">Graded</div><div class="metric-value"><?php echo (int) $student['graded_count']; ?><span class="metric-value-sub">/ <?php echo (int) $student['total_items']; ?></span></div></div></article>
+                            </div>
+
+                            <?php if (empty($student['history'])): ?>
+                                <div class="empty-state large"><i class="bi <?php echo e($typeMeta['icon']); ?>"></i><span>No <?php echo e(strtolower($typeMeta['plural'])); ?> ready to grade yet.</span></div>
+                            <?php else: ?>
+                                <div class="student-history-list">
+                                    <?php foreach ($student['history'] as $entry): $item = $entry['item']; ?>
+                                        <div class="student-history-row">
+                                            <span>
+                                                <strong><?php echo e($item['title']); ?></strong>
+                                                <small><?php echo !empty($item['scheduled_date']) ? e(date('M j, Y', strtotime((string) $item['scheduled_date']))) : 'No date'; ?> &bull; Max <?php echo e(format_score($item['max_score'])); ?></small>
+                                            </span>
+                                            <?php if ($entry['score'] === null): ?>
+                                                <span class="status-pill small tone-slate">Not graded</span>
+                                            <?php else: ?>
+                                                <span class="status-pill small <?php echo $entry['pct'] >= 75 ? 'tone-emerald' : ($entry['pct'] >= 50 ? 'tone-amber' : 'tone-rose'); ?>"><?php echo e(format_score($entry['score'])); ?> / <?php echo e(format_score($entry['max'])); ?> &bull; <?php echo e(number_format($entry['pct'], 0)); ?>%</span>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php
+}
+
 function render_assessment_workspace(PDO $pdo, int $instructorId, array $class, string $csrfToken, array $errors, string $successMessage, string $type, int $editTargetItemId = 0, array $itemFieldErrors = []): void
 {
     $classId = (int) $class['id'];
@@ -2244,16 +2409,16 @@ function render_assessment_workspace(PDO $pdo, int $instructorId, array $class, 
     $isConfigured = $total !== null || !empty($items);
     $classGroupings = get_class_groupings($pdo, $classId, 'class');
 
-    // Grading a specific item (or managing that group activity's grouping).
+    // Grading a specific item (or managing that group assessment's grouping).
     $requestedItemId = (int) ($_GET['item'] ?? 0);
     $manageGroups = !empty($_GET['manage_groups']);
     if ($requestedItemId > 0) {
         $gradeItem = get_assessment_item($pdo, $classId, $requestedItemId, $type);
         if ($gradeItem && is_assessment_item_gradeable($gradeItem)) {
             $itemGroupingId = (int) ($gradeItem['grouping_id'] ?? 0);
-            $isGroupItem = $type === 'activity' && (string) ($gradeItem['activity_mode'] ?? 'individual') === 'group';
+            $isGroupItem = assessment_item_is_group($gradeItem);
 
-            // Manage-groups: reuse the class Groupings live editor for this activity's grouping.
+            // Manage-groups: reuse the class Groupings live editor for this item's grouping.
             if ($manageGroups && $isGroupItem && $itemGroupingId > 0) {
                 $itemGrouping = grouping_belongs_to_instructor($pdo, $itemGroupingId, $instructorId);
                 if ($itemGrouping && (int) $itemGrouping['class_id'] === $classId) {
@@ -2312,6 +2477,9 @@ function render_assessment_workspace(PDO $pdo, int $instructorId, array $class, 
                 <h2><?php echo e($typeMeta['plural']); ?></h2>
                 <div class="d-flex flex-wrap align-items-center gap-2">
                     <span><?php echo (int) $summary['configured']; ?> ready &bull; <?php echo (int) $summary['needs_setup']; ?> need setup &bull; <?php echo (int) $summary['graded']; ?> graded</span>
+                    <button class="btn btn-copy" type="button" data-bs-toggle="modal" data-bs-target="#studentAssessmentModal-<?php echo e($type); ?>" data-reset-student-modal>
+                        <i class="bi bi-people"></i> View Student <?php echo e($typeMeta['plural']); ?>
+                    </button>
                     <form method="post" action="<?php echo e(instructor_class_route($classId, $typeMeta['view'])); ?>" class="d-inline">
                         <input type="hidden" name="csrf_token" value="<?php echo e($csrfToken); ?>">
                         <input type="hidden" name="class_action" value="assessment_item_add">
@@ -2335,7 +2503,7 @@ function render_assessment_workspace(PDO $pdo, int $instructorId, array $class, 
                         <?php
                         $graded = (int) $item['score_count'] > 0;
                         $gradeable = is_assessment_item_gradeable($item);
-                        $isGroup = $type === 'activity' && (string) ($item['activity_mode'] ?? 'individual') === 'group';
+                        $isGroup = assessment_item_is_group($item);
                         ?>
                         <article class="meeting-item <?php echo $gradeable ? '' : 'is-inactive'; ?>">
                             <div>
@@ -2371,6 +2539,8 @@ function render_assessment_workspace(PDO $pdo, int $instructorId, array $class, 
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
+
+            <?php render_student_assessment_modal($classId, $type, $typeMeta, build_student_assessment_overview($pdo, $classId, $type)); ?>
         <?php endif; ?>
     </section>
     <?php
@@ -2662,8 +2832,20 @@ function render_instructor_class_workspace(array $class, string $classView, arra
             <?php render_assessment_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage, 'activity', $editTargetItemId, $itemFieldErrors); ?>
         <?php elseif ($classView === 'quizzes'): ?>
             <?php render_assessment_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage, 'quiz', $editTargetItemId, $itemFieldErrors); ?>
+        <?php elseif ($classView === 'midterm'): ?>
+            <?php render_assessment_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage, 'midterm', $editTargetItemId, $itemFieldErrors); ?>
+        <?php elseif ($classView === 'finals'): ?>
+            <?php render_assessment_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage, 'finals', $editTargetItemId, $itemFieldErrors); ?>
         <?php elseif ($classView === 'groupings'): ?>
             <?php render_groupings_workspace($pdo, $instructorId, $class, $csrfToken, $errors, $successMessage); ?>
+        <?php elseif ($classView === 'dashboard'): ?>
+            <?php render_insights_dashboard_workspace($pdo, $class); ?>
+        <?php elseif ($classView === 'analytics'): ?>
+            <?php render_insights_analytics_workspace($pdo, $class); ?>
+        <?php elseif ($classView === 'predictions'): ?>
+            <?php render_insights_predictions_workspace($pdo, $class); ?>
+        <?php elseif ($classView === 'recommendations'): ?>
+            <?php render_insights_recommendations_workspace($pdo, $class); ?>
         <?php elseif ($classView === 'overview'): ?>
             <div class="metric-grid class-overview-grid mt-4">
                 <article class="metric-card tone-indigo">
@@ -2940,7 +3122,7 @@ render_dashboard_page([
                             </div>
 
                             <?php render_teaching_schedule_fields($scheduleData, 'create_'); ?>
-                            <?php render_assessment_config_fields($assessmentTotalsInput['activity'], $assessmentTotalsInput['quiz'], 'create_'); ?>
+                            <?php render_assessment_config_fields($assessmentTotalsInput, 'create_'); ?>
                         </div>
 
                         <div class="modal-footer">

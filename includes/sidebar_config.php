@@ -60,6 +60,12 @@ function instructor_class_views(): array
             'icon' => 'bi-diagram-3',
             'description' => 'Create and manage reusable student groupings for this class.',
         ],
+        'dashboard' => [
+            'label' => 'Insights Dashboard',
+            'route' => 'class.dashboard',
+            'icon' => 'bi-speedometer2',
+            'description' => 'At-a-glance summary of class performance, attendance, and risk.',
+        ],
         'analytics' => [
             'label' => 'Analytics',
             'route' => 'class.analytics',
@@ -71,6 +77,12 @@ function instructor_class_views(): array
             'route' => 'class.predictions',
             'icon' => 'bi-stars',
             'description' => 'Review predictive academic risk signals for this class.',
+        ],
+        'recommendations' => [
+            'label' => 'Recommendations',
+            'route' => 'class.recommendations',
+            'icon' => 'bi-lightbulb',
+            'description' => 'Prescriptive interventions, assessment insights, and teaching tips.',
         ],
     ];
 }
@@ -154,6 +166,18 @@ function instructor_sidebar_menu(array $classes, ?int $selectedClassId = null): 
             'icon' => 'bi-grid-1x2-fill',
             'href' => url_for('pages/instructor/dashboard.php'),
             'route' => 'dashboard',
+        ],
+        [
+            'label' => 'Students',
+            'icon' => 'bi-people',
+            'href' => url_for('pages/instructor/students.php'),
+            'route' => 'students',
+        ],
+        [
+            'label' => 'Assessments',
+            'icon' => 'bi-journal-text',
+            'href' => url_for('pages/instructor/assessments.php'),
+            'route' => 'assessments',
         ],
         [
             'type' => 'group',
@@ -253,6 +277,12 @@ function instructor_sidebar_menu(array $classes, ?int $selectedClassId = null): 
             'label' => 'INSIGHTS',
             'items' => [
                 [
+                    'label' => 'Dashboard',
+                    'icon' => 'bi-speedometer2',
+                    'href' => instructor_class_route($selectedClassId, 'dashboard'),
+                    'route' => 'class.dashboard',
+                ],
+                [
                     'label' => 'Analytics',
                     'icon' => 'bi-graph-up',
                     'href' => instructor_class_route($selectedClassId, 'analytics'),
@@ -263,6 +293,12 @@ function instructor_sidebar_menu(array $classes, ?int $selectedClassId = null): 
                     'icon' => 'bi-stars',
                     'href' => instructor_class_route($selectedClassId, 'predictions'),
                     'route' => 'class.predictions',
+                ],
+                [
+                    'label' => 'Recommendations',
+                    'icon' => 'bi-lightbulb',
+                    'href' => instructor_class_route($selectedClassId, 'recommendations'),
+                    'route' => 'class.recommendations',
                 ],
             ],
         ];
@@ -288,4 +324,66 @@ function instructor_sidebar_menu(array $classes, ?int $selectedClassId = null): 
     ];
 
     return $menu;
+}
+
+/** Shared administrator portal sidebar. */
+function admin_sidebar_menu(): array
+{
+    $users = url_for('pages/administrator/users.php');
+    return [
+        ['label' => 'Dashboard', 'icon' => 'bi-grid-1x2-fill', 'href' => url_for('pages/administrator/dashboard.php'), 'route' => 'admin.dashboard'],
+        [
+            'type' => 'section',
+            'label' => 'MANAGEMENT',
+            'items' => [
+                ['label' => 'User Management', 'icon' => 'bi-people', 'href' => $users, 'route' => 'admin.users'],
+                ['label' => 'Instructors', 'icon' => 'bi-person-workspace', 'href' => $users . '?role=instructor', 'route' => 'admin.instructors'],
+                ['label' => 'Students', 'icon' => 'bi-mortarboard', 'href' => $users . '?role=student', 'route' => 'admin.students'],
+                ['label' => 'Classes', 'icon' => 'bi-easel2', 'href' => url_for('pages/administrator/classes.php'), 'route' => 'admin.classes'],
+            ],
+        ],
+        [
+            'type' => 'section',
+            'label' => 'SYSTEM',
+            'items' => [
+                ['label' => 'Announcements', 'icon' => 'bi-megaphone', 'href' => url_for('pages/administrator/announcements.php'), 'route' => 'admin.announcements'],
+                ['label' => 'System Settings', 'icon' => 'bi-sliders', 'href' => url_for('pages/administrator/settings.php'), 'route' => 'admin.settings'],
+            ],
+        ],
+    ];
+}
+
+/**
+ * Shared student portal sidebar. The Grades/Attendance/Progress/Target/Predictions
+ * links point at class-insights.php (the page resolves 0/1/2+ enrollments); when a
+ * class is already selected, pass its id so those links stay on that class.
+ */
+function student_sidebar_menu(?int $classId = null): array
+{
+    $insights = url_for('pages/student/class-insights.php');
+    $suffix = $classId ? '?class_id=' . (int) $classId . '&tab=' : '?tab=';
+
+    return [
+        ['label' => 'Dashboard', 'icon' => 'bi-grid-1x2-fill', 'href' => url_for('pages/student/dashboard.php'), 'route' => 'student.dashboard'],
+        ['label' => 'My Classes', 'icon' => 'bi-easel2', 'href' => url_for('pages/student/classes.php'), 'route' => 'student.classes'],
+        [
+            'type' => 'section',
+            'label' => 'MY PROGRESS',
+            'items' => [
+                ['label' => 'Grades', 'icon' => 'bi-clipboard-data', 'href' => $insights . $suffix . 'grades', 'route' => 'student.grades'],
+                ['label' => 'Attendance', 'icon' => 'bi-calendar-check', 'href' => $insights . $suffix . 'attendance', 'route' => 'student.attendance'],
+                ['label' => 'Progress', 'icon' => 'bi-activity', 'href' => $insights . $suffix . 'participation', 'route' => 'student.progress'],
+                ['label' => 'Target Grade', 'icon' => 'bi-bullseye', 'href' => $insights . $suffix . 'goal', 'route' => 'student.goal'],
+                ['label' => 'Predictions', 'icon' => 'bi-stars', 'href' => $insights . $suffix . 'predictions', 'route' => 'student.predictions'],
+                ['label' => 'Warnings', 'icon' => 'bi-exclamation-triangle', 'href' => url_for('pages/student/warnings.php'), 'route' => 'student.warnings'],
+            ],
+        ],
+        [
+            'type' => 'section',
+            'label' => 'Account',
+            'items' => [
+                ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => url_for('pages/student/settings.php'), 'route' => 'student.settings'],
+            ],
+        ],
+    ];
 }
