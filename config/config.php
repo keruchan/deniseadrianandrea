@@ -45,7 +45,7 @@ define('APP_BASE_PATH', '');
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'u763192172_edutrack');
 define('DB_USER', 'u763192172_edutr');
-define('DB_PASS', 'madalingtandaanJL28');
+define('DB_PASS', 'madalingtandaanJL28!');
 define('DB_CHARSET', 'utf8mb4');
 
 $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
