@@ -356,7 +356,7 @@ function render_dashboard_page(array $page): void
                     <h1><?php echo e($title); ?></h1>
                     <p><?php echo e($description); ?></p>
                 </div>
-                <span class="status-pill"><i class="bi bi-shield-check"></i> Foundation ready</span>
+                <span class="status-pill"><i class="bi bi-shield-check"></i> Real-time ready</span>
             </section>
 
             <?php if (is_callable($contentCallback)): ?>
