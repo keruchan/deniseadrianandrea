@@ -78,6 +78,7 @@ render_dashboard_page([
                             <div>
                                 <h3><?php echo e($c['label']); ?></h3>
                                 <span class="insights-sub"><i class="bi bi-person-workspace"></i> <?php echo e($c['instructor']); ?></span>
+                                <span class="insights-sub"><i class="bi bi-calendar3"></i> <?php echo e($c['school_year'] !== '' ? $c['school_year'] : 'No school year'); ?> &middot; <i class="bi bi-journal-bookmark"></i> <?php echo e($c['term'] !== '' ? $c['term'] : 'No semester'); ?></span>
                             </div>
                             <span class="dash-class-avg <?php echo $avgTone; ?>"><?php echo insights_num($avg, 1); ?></span>
                         </div>

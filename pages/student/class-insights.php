@@ -22,7 +22,7 @@ ensure_insights_schema($pdo);
 
 // Active enrollments = the only classes this student may view insights for.
 $enrollStmt = $pdo->prepare(
-    'SELECT c.id, c.class_name, c.section, c.subject_name, c.class_code,
+    'SELECT c.id, c.class_name, c.section, c.subject_name, c.class_code, c.school_year, c.term,
             CONCAT(i.first_name, " ", i.last_name) AS instructor_name
      FROM class_enrollments ce
      INNER JOIN classes c ON c.id = ce.class_id
@@ -104,6 +104,7 @@ render_dashboard_page([
                     <div class="eyebrow">Class</div>
                     <h2><?php echo e($selectedClass['class_name']); ?><?php echo !empty($selectedClass['section']) ? ' ' . e($selectedClass['section']) : ''; ?></h2>
                     <p class="insights-sub"><?php echo e($selectedClass['subject_name']); ?> &middot; <?php echo e($selectedClass['instructor_name'] ?: 'Instructor'); ?></p>
+                    <p class="insights-sub"><i class="bi bi-calendar3"></i> <?php echo e($selectedClass['school_year'] ?: 'No school year'); ?> &middot; <i class="bi bi-journal-bookmark"></i> <?php echo e($selectedClass['term'] ?: 'No semester'); ?></p>
                 </div>
                 <?php if (count($enrollments) > 1): ?>
                     <a class="btn btn-copy" href="class-insights.php"><i class="bi bi-arrow-left-right"></i> Switch class</a>
@@ -143,6 +144,8 @@ render_dashboard_page([
                         </div>
                         <div class="class-meta">
                             <span><i class="bi bi-person-workspace"></i><?php echo e($c['instructor_name'] ?: 'Instructor'); ?></span>
+                            <span><i class="bi bi-calendar3"></i><?php echo e($c['school_year'] ?: 'No school year'); ?></span>
+                            <span><i class="bi bi-journal-bookmark"></i><?php echo e($c['term'] ?: 'No semester'); ?></span>
                         </div>
                     </a>
                 <?php endforeach; ?>

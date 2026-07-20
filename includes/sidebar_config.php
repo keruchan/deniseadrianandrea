@@ -348,6 +348,7 @@ function admin_sidebar_menu(): array
             'items' => [
                 ['label' => 'Announcements', 'icon' => 'bi-megaphone', 'href' => url_for('pages/administrator/announcements.php'), 'route' => 'admin.announcements'],
                 ['label' => 'System Settings', 'icon' => 'bi-sliders', 'href' => url_for('pages/administrator/settings.php'), 'route' => 'admin.settings'],
+                ['label' => 'Account Settings', 'icon' => 'bi-person-gear', 'href' => url_for('settings/account'), 'route' => 'settings.account'],
             ],
         ],
     ];
@@ -382,7 +383,7 @@ function student_sidebar_menu(?int $classId = null): array
             'type' => 'section',
             'label' => 'Account',
             'items' => [
-                ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => url_for('pages/student/settings.php'), 'route' => 'student.settings'],
+                ['label' => 'Settings', 'icon' => 'bi-gear', 'href' => url_for('settings/account'), 'route' => 'settings.account'],
             ],
         ],
     ];

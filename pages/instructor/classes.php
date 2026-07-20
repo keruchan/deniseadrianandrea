@@ -371,7 +371,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$meeting) {
                     $errors[] = 'Meeting not found.';
                 } else {
-                    save_attendance_records($pdo, $meetingId, $_POST['attendance'] ?? [], (int) $meeting['class_id']);
+                    $attendanceInput = is_array($_POST['attendance'] ?? null) ? $_POST['attendance'] : [];
+                    $absenceStudentIds = [];
+                    foreach ($attendanceInput as $postedStudentId => $postedStatus) {
+                        if ((string) $postedStatus === 'absent') {
+                            $absenceStudentIds[] = (int) $postedStudentId;
+                        }
+                    }
+                    $absenceCountsBefore = get_student_unexcused_absence_counts($pdo, (int) $meeting['class_id'], $absenceStudentIds);
+
+                    save_attendance_records($pdo, $meetingId, $attendanceInput, (int) $meeting['class_id']);
+
+                    $absenceCountsAfter = get_student_unexcused_absence_counts($pdo, (int) $meeting['class_id'], $absenceStudentIds);
+                    $notifyCounts = [];
+                    foreach ($absenceCountsAfter as $studentId => $afterCount) {
+                        $beforeCount = $absenceCountsBefore[(int) $studentId] ?? 0;
+                        if ($afterCount > $beforeCount && in_array((int) $afterCount, [attendance_warning_absence_threshold(), attendance_drop_absence_threshold()], true)) {
+                            $notifyCounts[(int) $studentId] = (int) $afterCount;
+                        }
+                    }
+                    if (!empty($notifyCounts)) {
+                        $classNameStmt = $pdo->prepare('SELECT class_name FROM classes WHERE id = :id LIMIT 1');
+                        $classNameStmt->execute([':id' => (int) $meeting['class_id']]);
+                        $notifyClassName = (string) ($classNameStmt->fetchColumn() ?: 'your class');
+                        notify_students_of_attendance_absence_warning(
+                            $pdo,
+                            $notifyCounts,
+                            $notifyClassName,
+                            url_for('pages/student/class-insights.php') . '?class_id=' . (int) $meeting['class_id'] . '&tab=attendance'
+                        );
+                    }
+
                     rotate_csrf_token('csrf_class_manage_token');
                     $_SESSION['class_success'] = 'Attendance saved successfully.';
 
@@ -803,6 +833,54 @@ if ($selectedClass !== null) {
 
 $menu = instructor_sidebar_menu($allClasses, $selectedClassId);
 
+function academic_term_options(): array
+{
+    return [
+        'First Semester' => 'First Sem',
+        'Intersem' => 'Intersem',
+        'Second Semester' => 'Second Sem',
+    ];
+}
+
+function render_academic_term_options(string $selectedTerm): void
+{
+    ?>
+    <option value="">Select term</option>
+    <?php foreach (academic_term_options() as $termValue => $termLabel): ?>
+        <option value="<?php echo e($termValue); ?>" <?php echo $selectedTerm === $termValue ? 'selected' : ''; ?>><?php echo e($termLabel); ?></option>
+    <?php endforeach; ?>
+    <?php if ($selectedTerm !== '' && !array_key_exists($selectedTerm, academic_term_options())): ?>
+        <option value="<?php echo e($selectedTerm); ?>" selected><?php echo e($selectedTerm); ?></option>
+    <?php endif; ?>
+    <?php
+}
+
+function school_year_options(string $selectedSchoolYear): array
+{
+    $currentYear = (int) date('Y');
+    $years = [];
+
+    for ($year = $currentYear - 2; $year <= $currentYear + 5; $year++) {
+        $years[] = $year . '-' . ($year + 1);
+    }
+
+    if ($selectedSchoolYear !== '' && !in_array($selectedSchoolYear, $years, true)) {
+        array_unshift($years, $selectedSchoolYear);
+    }
+
+    return array_values(array_unique($years));
+}
+
+function render_school_year_options(string $selectedSchoolYear): void
+{
+    ?>
+    <option value="">Select school year</option>
+    <?php foreach (school_year_options($selectedSchoolYear) as $schoolYear): ?>
+        <option value="<?php echo e($schoolYear); ?>" <?php echo $selectedSchoolYear === $schoolYear ? 'selected' : ''; ?>><?php echo e($schoolYear); ?></option>
+    <?php endforeach; ?>
+    <?php
+}
+
 function render_teaching_schedule_fields(array $scheduleData, string $idPrefix): void
 {
     $weekdays = attendance_weekdays();
@@ -824,12 +902,16 @@ function render_teaching_schedule_fields(array $scheduleData, string $idPrefix):
                 <input type="date" class="form-control" id="<?php echo e($idPrefix); ?>course_start_date" name="course_start_date" value="<?php echo e((string) $scheduleData['course_start_date']); ?>" required>
             </div>
             <div class="field">
-                <label for="<?php echo e($idPrefix); ?>semester_weeks" class="form-label">Semester length</label>
+                <label for="<?php echo e($idPrefix); ?>semester_weeks" class="form-label">Semester length (no. of weeks)</label>
                 <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>semester_weeks" name="semester_weeks" value="<?php echo e((string) $scheduleData['semester_weeks']); ?>" min="1" max="30" step="1" required>
             </div>
             <div class="field">
                 <label for="<?php echo e($idPrefix); ?>meetings_per_week" class="form-label">Meetings per week</label>
-                <input type="number" class="form-control" id="<?php echo e($idPrefix); ?>meetings_per_week" name="meetings_per_week" value="<?php echo e((string) $scheduleData['meetings_per_week']); ?>" min="1" max="7" step="1" data-meetings-per-week required>
+                <select class="form-control" id="<?php echo e($idPrefix); ?>meetings_per_week" name="meetings_per_week" data-meetings-per-week required>
+                    <?php for ($meetingCount = 1; $meetingCount <= 7; $meetingCount++): ?>
+                        <option value="<?php echo e((string) $meetingCount); ?>" <?php echo (int) $scheduleData['meetings_per_week'] === $meetingCount ? 'selected' : ''; ?>><?php echo e((string) $meetingCount); ?></option>
+                    <?php endfor; ?>
+                </select>
             </div>
         </div>
 
@@ -1900,31 +1982,35 @@ function render_edit_class_modal(PDO $pdo, array $class, string $csrfToken, arra
                         <div class="form-grid">
                             <div class="field field-wide">
                                 <label for="edit_class_name_<?php echo e((string) $classId); ?>" class="form-label">Class name</label>
-                                <input type="text" class="form-control" id="edit_class_name_<?php echo e((string) $classId); ?>" name="class_name" value="<?php echo e($editFormData['class_name']); ?>" maxlength="150" required>
+                                <input type="text" class="form-control" id="edit_class_name_<?php echo e((string) $classId); ?>" name="class_name" value="<?php echo e($editFormData['class_name']); ?>" maxlength="150" placeholder="e.g. BSIT 1-A" required>
                             </div>
                             <div class="field">
                                 <label for="edit_subject_name_<?php echo e((string) $classId); ?>" class="form-label">Subject name</label>
-                                <input type="text" class="form-control" id="edit_subject_name_<?php echo e((string) $classId); ?>" name="subject_name" value="<?php echo e($editFormData['subject_name']); ?>" maxlength="150" required>
+                                <input type="text" class="form-control" id="edit_subject_name_<?php echo e((string) $classId); ?>" name="subject_name" value="<?php echo e($editFormData['subject_name']); ?>" maxlength="150" placeholder="Fundamentals of Programming" required>
                             </div>
                             <div class="field">
                                 <label for="edit_subject_code_<?php echo e((string) $classId); ?>" class="form-label">Subject code</label>
-                                <input type="text" class="form-control" id="edit_subject_code_<?php echo e((string) $classId); ?>" name="subject_code" value="<?php echo e($editFormData['subject_code']); ?>" maxlength="50">
+                                <input type="text" class="form-control" id="edit_subject_code_<?php echo e((string) $classId); ?>" name="subject_code" value="<?php echo e($editFormData['subject_code']); ?>" maxlength="50" placeholder="ITEC 102">
                             </div>
                             <div class="field">
                                 <label for="edit_section_<?php echo e((string) $classId); ?>" class="form-label">Section</label>
-                                <input type="text" class="form-control" id="edit_section_<?php echo e((string) $classId); ?>" name="section" value="<?php echo e($editFormData['section']); ?>" maxlength="100">
+                                <input type="text" class="form-control" id="edit_section_<?php echo e((string) $classId); ?>" name="section" value="<?php echo e($editFormData['section']); ?>" maxlength="100" placeholder="1-A">
                             </div>
                             <div class="field">
                                 <label for="edit_schedule_<?php echo e((string) $classId); ?>" class="form-label">Schedule</label>
-                                <input type="text" class="form-control" id="edit_schedule_<?php echo e((string) $classId); ?>" name="schedule" value="<?php echo e($editFormData['schedule']); ?>" maxlength="150">
+                                <input type="text" class="form-control" id="edit_schedule_<?php echo e((string) $classId); ?>" name="schedule" value="<?php echo e($editFormData['schedule']); ?>" maxlength="150" placeholder="TTh 8:30 AM - 10:00 AM">
                             </div>
                             <div class="field">
                                 <label for="edit_school_year_<?php echo e((string) $classId); ?>" class="form-label">School year</label>
-                                <input type="text" class="form-control" id="edit_school_year_<?php echo e((string) $classId); ?>" name="school_year" value="<?php echo e($editFormData['school_year']); ?>" maxlength="20">
+                                <select class="form-control" id="edit_school_year_<?php echo e((string) $classId); ?>" name="school_year">
+                                    <?php render_school_year_options($editFormData['school_year']); ?>
+                                </select>
                             </div>
                             <div class="field">
                                 <label for="edit_term_<?php echo e((string) $classId); ?>" class="form-label">Term</label>
-                                <input type="text" class="form-control" id="edit_term_<?php echo e((string) $classId); ?>" name="term" value="<?php echo e($editFormData['term']); ?>" maxlength="50">
+                                <select class="form-control" id="edit_term_<?php echo e((string) $classId); ?>" name="term">
+                                    <?php render_academic_term_options($editFormData['term']); ?>
+                                </select>
                             </div>
                             <div class="field field-wide">
                                 <label for="edit_description_<?php echo e((string) $classId); ?>" class="form-label">Description</label>
@@ -2819,6 +2905,8 @@ function render_instructor_class_workspace(array $class, string $classView, arra
 
         <div class="class-context-meta">
             <span><i class="bi bi-calendar2-week"></i><?php echo e($class['schedule'] ?: 'No schedule set'); ?></span>
+            <span><i class="bi bi-calendar3"></i><?php echo e($class['school_year'] ?: 'No school year'); ?></span>
+            <span><i class="bi bi-journal-bookmark"></i><?php echo e($class['term'] ?: 'No semester'); ?></span>
             <span><i class="bi bi-people"></i><?php echo e((string) $class['student_count']); ?> students</span>
             <span><i class="bi bi-clock-history"></i>Created <?php echo e($createdAt); ?></span>
             <span><i class="bi bi-circle-fill"></i><?php echo e($class['status']); ?></span>
@@ -2890,6 +2978,7 @@ function render_instructor_class_workspace(array $class, string $classView, arra
                     </div>
                     <div class="class-action-grid">
                         <a class="btn btn-copy" href="<?php echo e(instructor_class_route($classId, 'attendance')); ?>"><i class="bi bi-calendar-check"></i> Attendance</a>
+                        <a class="btn btn-copy" href="<?php echo e(url_for('pages/instructor/students.php?class=' . $classId)); ?>"><i class="bi bi-people"></i> Students</a>
                         <a class="btn btn-copy" href="<?php echo e(instructor_class_route($classId, 'participation')); ?>"><i class="bi bi-chat-square-text"></i> Participation</a>
                         <a class="btn btn-copy" href="<?php echo e(instructor_class_route($classId, 'activities')); ?>"><i class="bi bi-journal-check"></i> Activities</a>
                         <a class="btn btn-copy" href="<?php echo e(instructor_class_route($classId, 'quizzes')); ?>"><i class="bi bi-patch-question"></i> Quizzes</a>
@@ -3014,6 +3103,8 @@ render_dashboard_page([
                             </div>
                             <div class="class-meta">
                                 <span><i class="bi bi-calendar2-week"></i><?php echo e($class['schedule'] ?: 'No schedule set'); ?></span>
+                                <span><i class="bi bi-calendar3"></i><?php echo e($class['school_year'] ?: 'No school year'); ?></span>
+                                <span><i class="bi bi-journal-bookmark"></i><?php echo e($class['term'] ?: 'No semester'); ?></span>
                                 <span><i class="bi bi-people"></i><?php echo e((string) $class['student_count']); ?> students</span>
                             </div>
                             <div class="join-box">
@@ -3032,6 +3123,9 @@ render_dashboard_page([
                                 </button>
                             </div>
                             <div class="class-card-actions">
+                                <a class="btn btn-copy" href="<?php echo e(url_for('pages/instructor/students.php?class=' . (int) $class['id'])); ?>">
+                                    <i class="bi bi-people"></i> Students
+                                </a>
                                 <a class="btn btn-copy" href="<?php echo e(instructor_class_route((int) $class['id'])); ?>">
                                     <i class="bi bi-box-arrow-up-right"></i> Open class
                                 </a>
@@ -3089,31 +3183,35 @@ render_dashboard_page([
                             <div class="form-grid">
                                 <div class="field field-wide">
                                     <label for="class_name" class="form-label">Class name</label>
-                                    <input type="text" class="form-control" id="class_name" name="class_name" value="<?php echo e($formData['class_name']); ?>" maxlength="150" placeholder="Example: Grade 11 STEM - Mathematics" required>
+                                    <input type="text" class="form-control" id="class_name" name="class_name" value="<?php echo e($formData['class_name']); ?>" maxlength="150" placeholder="e.g. BSIT 1-A" required>
                                 </div>
                                 <div class="field">
                                     <label for="subject_name" class="form-label">Subject name</label>
-                                    <input type="text" class="form-control" id="subject_name" name="subject_name" value="<?php echo e($formData['subject_name']); ?>" maxlength="150" placeholder="General Mathematics" required>
+                                    <input type="text" class="form-control" id="subject_name" name="subject_name" value="<?php echo e($formData['subject_name']); ?>" maxlength="150" placeholder="Fundamentals of Programming" required>
                                 </div>
                                 <div class="field">
                                     <label for="subject_code" class="form-label">Subject code</label>
-                                    <input type="text" class="form-control" id="subject_code" name="subject_code" value="<?php echo e($formData['subject_code']); ?>" maxlength="50" placeholder="MATH-101">
+                                    <input type="text" class="form-control" id="subject_code" name="subject_code" value="<?php echo e($formData['subject_code']); ?>" maxlength="50" placeholder="ITEC 102">
                                 </div>
                                 <div class="field">
                                     <label for="section" class="form-label">Section</label>
-                                    <input type="text" class="form-control" id="section" name="section" value="<?php echo e($formData['section']); ?>" maxlength="100" placeholder="STEM 11-A">
+                                    <input type="text" class="form-control" id="section" name="section" value="<?php echo e($formData['section']); ?>" maxlength="100" placeholder="1-A">
                                 </div>
                                 <div class="field">
                                     <label for="schedule" class="form-label">Schedule</label>
-                                    <input type="text" class="form-control" id="schedule" name="schedule" value="<?php echo e($formData['schedule']); ?>" maxlength="150" placeholder="MWF 9:00 AM - 10:00 AM">
+                                    <input type="text" class="form-control" id="schedule" name="schedule" value="<?php echo e($formData['schedule']); ?>" maxlength="150" placeholder="TTh 8:30 AM - 10:00 AM">
                                 </div>
                                 <div class="field">
                                     <label for="school_year" class="form-label">School year</label>
-                                    <input type="text" class="form-control" id="school_year" name="school_year" value="<?php echo e($formData['school_year']); ?>" maxlength="20" placeholder="2026-2027">
+                                    <select class="form-control" id="school_year" name="school_year">
+                                        <?php render_school_year_options($formData['school_year']); ?>
+                                    </select>
                                 </div>
                                 <div class="field">
                                     <label for="term" class="form-label">Term</label>
-                                    <input type="text" class="form-control" id="term" name="term" value="<?php echo e($formData['term']); ?>" maxlength="50" placeholder="First Semester">
+                                    <select class="form-control" id="term" name="term">
+                                        <?php render_academic_term_options($formData['term']); ?>
+                                    </select>
                                 </div>
                                 <div class="field field-wide">
                                     <label for="description" class="form-label">Description</label>

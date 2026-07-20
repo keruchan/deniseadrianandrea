@@ -836,6 +836,23 @@ button:focus-visible {
     background: var(--amber-100);
 }
 
+.metric-card.tone-rose .metric-icon {
+    color: #be123c;
+    background: #ffe4e6;
+}
+
+.metric-card.metric-card-attention .metric-icon {
+    color: #fff;
+    background: linear-gradient(135deg, #dc2626, #f97316);
+    box-shadow: 0 10px 20px rgba(220, 38, 38, 0.22);
+}
+
+.metric-card.metric-card-at-risk .metric-icon {
+    color: #fff;
+    background: linear-gradient(135deg, #be123c, #7f1d1d);
+    box-shadow: 0 10px 20px rgba(190, 18, 60, 0.22);
+}
+
 .metric-label {
     color: var(--slate-500);
     font-size: 0.75rem;

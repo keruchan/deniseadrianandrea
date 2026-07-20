@@ -49,6 +49,16 @@ function grading_weight_defaults(): array
     ];
 }
 
+function attendance_drop_absence_threshold(): int
+{
+    return 3;
+}
+
+function attendance_warning_absence_threshold(): int
+{
+    return 2;
+}
+
 /** Maps a grade component to its assessment `type` (attendance/participation have none). */
 function insights_component_assessment_type(string $component): ?string
 {
@@ -360,12 +370,16 @@ function compute_student_bundle(array $student, array $dataset, array $weights, 
     $attRow = $dataset['att_matrix'][$studentId] ?? [];
     $attAttended = 0;
     $attTaken = 0;
+    $unexcusedAbsences = 0;
     foreach (insights_regular_meetings($dataset['meetings']) as $m) {
         $status = $attRow[(int) $m['id']] ?? null;
         if ($status === null) {
             continue;
         }
         $attTaken++;
+        if ($status === 'absent') {
+            $unexcusedAbsences++;
+        }
         if (in_array($status, ['present', 'late', 'excused'], true)) {
             $attAttended++;
         }
@@ -505,6 +519,11 @@ function compute_student_bundle(array $student, array $dataset, array $weights, 
     if ($predictedFinal !== null && $predictedFinal < $passing) {
         $riskScore = max($riskScore, 55.0);
     }
+    if ($unexcusedAbsences >= attendance_drop_absence_threshold()) {
+        $riskScore = max($riskScore, 80.0);
+    } elseif ($unexcusedAbsences >= attendance_warning_absence_threshold()) {
+        $riskScore = max($riskScore, 50.0);
+    }
     $riskLevel = $riskScore >= 67 ? 'high' : ($riskScore >= 34 ? 'medium' : 'low');
 
     return [
@@ -522,6 +541,9 @@ function compute_student_bundle(array $student, array $dataset, array $weights, 
         'risk_level' => $riskLevel,
         'confidence' => $confidence,
         'attendance_rate' => $attPct,
+        'unexcused_absences' => $unexcusedAbsences,
+        'absence_warning' => $unexcusedAbsences >= attendance_warning_absence_threshold(),
+        'drop_warning' => $unexcusedAbsences >= attendance_drop_absence_threshold(),
         'participation_rate' => $partPct,
         'missing_count' => $missingCount,
         'locked_points' => $lockedPoints,
@@ -1218,6 +1240,22 @@ function generate_student_recommendations(array $bundle, array $weights): array
     $recs = [];
     $passing = (float) $weights['passing_grade'];
 
+    if (!empty($bundle['drop_warning'])) {
+        $recs[] = [
+            'icon' => 'bi-exclamation-octagon',
+            'severity' => 'high',
+            'title' => 'Needs immediate attention: ' . (int) $bundle['unexcused_absences'] . ' unexcused absences',
+            'text' => 'Three unexcused absences are subject for dropping review. This is a warning only; removal must be done manually by the instructor.',
+        ];
+    } elseif (!empty($bundle['absence_warning'])) {
+        $recs[] = [
+            'icon' => 'bi-exclamation-triangle',
+            'severity' => 'medium',
+            'title' => 'Attendance warning: 2 unexcused absences',
+            'text' => 'Two unexcused absences is an early warning. Three unexcused absences are subject for dropping review.',
+        ];
+    }
+
     if ($bundle['missing_count'] > 0) {
         $recs[] = [
             'icon' => 'bi-clipboard-x',
@@ -1450,6 +1488,11 @@ function insights_risk_reason(array $bundle): string
     if ($bundle['attendance_rate'] !== null && $bundle['attendance_rate'] < 70) {
         $reasons[] = 'low attendance';
     }
+    if (!empty($bundle['drop_warning'])) {
+        $reasons[] = (int) $bundle['unexcused_absences'] . ' unexcused absences';
+    } elseif (!empty($bundle['absence_warning'])) {
+        $reasons[] = '2 unexcused absences';
+    }
     if ($bundle['missing_count'] > 0) {
         $reasons[] = $bundle['missing_count'] . ' missing';
     }
@@ -1481,6 +1524,8 @@ function get_instructor_dashboard(PDO $pdo, int $instructorId): array
     $studentIds = [];
     $totalAtRisk = 0;
     $totalMissingStudents = 0;
+    $totalAbsenceWarnings = 0;
+    $totalDropWarnings = 0;
     $perClass = [];        // one summary row per class (for routing cards)
     $totalPending = 0;
     $totalUpcomingAssess = 0;
@@ -1503,6 +1548,8 @@ function get_instructor_dashboard(PDO $pdo, int $instructorId): array
         $classAttVals = [];
         $classAtRisk = 0;
         $classMissing = 0;
+        $classAbsenceWarnings = 0;
+        $classDropWarnings = 0;
         foreach ($metrics as $sid => $m) {
             $studentIds[(int) $sid] = true;
             $allMetrics[] = $m;
@@ -1520,6 +1567,14 @@ function get_instructor_dashboard(PDO $pdo, int $instructorId): array
                 $classMissing++;
                 $totalMissingStudents++;
             }
+            if (!empty($m['absence_warning'])) {
+                $classAbsenceWarnings++;
+                $totalAbsenceWarnings++;
+            }
+            if (!empty($m['drop_warning'])) {
+                $classDropWarnings++;
+                $totalDropWarnings++;
+            }
         }
 
         $perClass[] = [
@@ -1530,6 +1585,8 @@ function get_instructor_dashboard(PDO $pdo, int $instructorId): array
             'attendance_rate' => $classAttVals ? array_sum($classAttVals) / count($classAttVals) : null,
             'at_risk' => $classAtRisk,
             'missing_students' => $classMissing,
+            'absence_warnings' => $classAbsenceWarnings,
+            'drop_warnings' => $classDropWarnings,
             'pending' => (int) $summary['pending_grading'],
             'upcoming' => (int) $summary['upcoming_assessments'],
         ];
@@ -1640,6 +1697,8 @@ function get_instructor_dashboard(PDO $pdo, int $instructorId): array
         'upcoming_assessments' => $totalUpcomingAssess,
         'at_risk_count' => $totalAtRisk,
         'missing_students' => $totalMissingStudents,
+        'absence_warnings' => $totalAbsenceWarnings,
+        'drop_warnings' => $totalDropWarnings,
         'attendance_trend' => ['labels' => $attLabels, 'values' => $attData],
         'grade_distribution' => get_grade_distribution($allMetrics),
         'completion_progress' => ['labels' => $compLabels, 'values' => $compData],
@@ -1683,6 +1742,8 @@ function get_instructor_students_overview(PDO $pdo, int $instructorId): array
     $classList = [];
     $distinct = [];
     $atRisk = 0;
+    $absenceWarnings = 0;
+    $dropWarnings = 0;
 
     foreach ($classes as $cls) {
         $classId = (int) $cls['id'];
@@ -1699,6 +1760,12 @@ function get_instructor_students_overview(PDO $pdo, int $instructorId): array
             if ($m['at_risk']) {
                 $atRisk++;
             }
+            if (!empty($m['absence_warning'])) {
+                $absenceWarnings++;
+            }
+            if (!empty($m['drop_warning'])) {
+                $dropWarnings++;
+            }
             $rows[] = [
                 'student_id' => $m['id'],
                 'student_no' => $m['student_no'],
@@ -1708,6 +1775,9 @@ function get_instructor_students_overview(PDO $pdo, int $instructorId): array
                 'class_label' => $label,
                 'current_grade' => $m['current_grade'],
                 'attendance_rate' => $m['attendance_rate'],
+                'unexcused_absences' => $m['unexcused_absences'],
+                'absence_warning' => $m['absence_warning'],
+                'drop_warning' => $m['drop_warning'],
                 'participation_rate' => $m['participation_rate'],
                 'predicted_final' => $m['predicted_final'],
                 'risk_level' => $m['risk_level'],
@@ -1723,6 +1793,8 @@ function get_instructor_students_overview(PDO $pdo, int $instructorId): array
         'total_rows' => count($rows),
         'distinct_students' => count($distinct),
         'at_risk' => $atRisk,
+        'absence_warnings' => $absenceWarnings,
+        'drop_warnings' => $dropWarnings,
     ];
 }
 
@@ -1820,7 +1892,7 @@ function get_student_dashboard(PDO $pdo, int $studentId): array
     $today = date('Y-m-d');
 
     $classesStmt = $pdo->prepare(
-        'SELECT c.id, c.class_name, c.section, CONCAT(i.first_name, " ", i.last_name) AS instructor
+        'SELECT c.id, c.class_name, c.section, c.school_year, c.term, CONCAT(i.first_name, " ", i.last_name) AS instructor
          FROM class_enrollments ce
          INNER JOIN classes c ON c.id = ce.class_id
          LEFT JOIN instructors i ON i.id = c.instructor_id
@@ -1859,6 +1931,8 @@ function get_student_dashboard(PDO $pdo, int $studentId): array
             'id' => $classId,
             'label' => $label,
             'instructor' => (string) ($cls['instructor'] ?: 'Instructor'),
+            'school_year' => (string) ($cls['school_year'] ?? ''),
+            'term' => (string) ($cls['term'] ?? ''),
             'current_grade' => $bundle['current_grade'],
             'attendance_rate' => $bundle['attendance_rate'],
             'participation_rate' => $bundle['participation_rate'],
@@ -1878,6 +1952,21 @@ function get_student_dashboard(PDO $pdo, int $studentId): array
                 'title' => 'At risk of not passing ' . $label,
                 'text' => 'Your projected final is ' . round($bundle['predicted_final']) . '% (passing is ' . round($bundle['passing_grade']) . '%). Review what you need on the Goal tab.',
                 'link' => $insightsBase . 'goal',
+            ];
+        }
+        if (!empty($bundle['drop_warning'])) {
+            $warnings[] = [
+                'severity' => 'high', 'icon' => 'bi-exclamation-octagon', 'class_id' => $classId, 'class_label' => $label,
+                'title' => 'Immediate attendance warning in ' . $label,
+                'text' => 'You have ' . (int) $bundle['unexcused_absences'] . ' unexcused absences. Three unexcused absences are subject for dropping review, but dropping is not automatic.',
+                'link' => $insightsBase . 'attendance',
+            ];
+        } elseif (!empty($bundle['absence_warning'])) {
+            $warnings[] = [
+                'severity' => 'medium', 'icon' => 'bi-exclamation-triangle', 'class_id' => $classId, 'class_label' => $label,
+                'title' => 'Attendance warning in ' . $label,
+                'text' => 'You have 2 unexcused absences. Three unexcused absences are subject for dropping review.',
+                'link' => $insightsBase . 'attendance',
             ];
         }
         if ($bundle['attendance_rate'] !== null && $bundle['attendance_rate'] < 75) {

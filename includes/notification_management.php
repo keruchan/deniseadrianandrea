@@ -240,3 +240,31 @@ function notify_students_of_grade(PDO $pdo, array $changedStudentIds, string $it
         );
     }
 }
+
+function notify_students_of_attendance_absence_warning(PDO $pdo, array $studentAbsenceCounts, string $className, string $link): void
+{
+    foreach ($studentAbsenceCounts as $studentId => $absenceCount) {
+        $studentId = (int) $studentId;
+        $absenceCount = (int) $absenceCount;
+        if ($studentId <= 0 || !in_array($absenceCount, [2, 3], true)) {
+            continue;
+        }
+
+        $userId = notification_student_user_id($pdo, $studentId);
+        if ($userId <= 0) {
+            continue;
+        }
+
+        $subject = $absenceCount >= 3;
+        create_notification(
+            $pdo,
+            $userId,
+            'risk',
+            $subject ? 'Subject for dropping review' : 'Attendance warning',
+            $subject
+                ? 'You now have 3 unexcused absences in ' . $className . '. Dropping is not automatic, but this needs immediate attention.'
+                : 'You now have 2 unexcused absences in ' . $className . '. Three unexcused absences are subject for dropping review.',
+            $link
+        );
+    }
+}

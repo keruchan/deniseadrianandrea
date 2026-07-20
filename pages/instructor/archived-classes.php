@@ -155,6 +155,8 @@ render_dashboard_page([
                             </div>
                             <div class="class-meta">
                                 <span><i class="bi bi-calendar2-week"></i><?php echo e($class['schedule'] ?: 'No schedule set'); ?></span>
+                                <span><i class="bi bi-calendar3"></i><?php echo e($class['school_year'] ?: 'No school year'); ?></span>
+                                <span><i class="bi bi-journal-bookmark"></i><?php echo e($class['term'] ?: 'No semester'); ?></span>
                                 <span><i class="bi bi-people"></i><?php echo e((string) $class['student_count']); ?> students</span>
                                 <span><i class="bi bi-archive"></i>Archived <?php echo e($archivedDate); ?></span>
                             </div>

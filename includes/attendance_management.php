@@ -468,6 +468,31 @@ function active_student_ids_for_class(PDO $pdo, int $classId): array
     return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
 }
 
+function get_student_unexcused_absence_counts(PDO $pdo, int $classId, array $studentIds): array
+{
+    $studentIds = array_values(array_unique(array_filter(array_map('intval', $studentIds), static fn ($id) => $id > 0)));
+    if (empty($studentIds)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($studentIds), '?'));
+    $stmt = $pdo->prepare(
+        "SELECT ar.student_id, COUNT(*) AS absence_count
+         FROM attendance_records ar
+         INNER JOIN class_meetings cm ON cm.id = ar.meeting_id
+         WHERE cm.class_id = ? AND cm.status = 'regular' AND ar.status = 'absent' AND ar.student_id IN ($placeholders)
+         GROUP BY ar.student_id"
+    );
+    $stmt->execute(array_merge([$classId], $studentIds));
+
+    $counts = array_fill_keys($studentIds, 0);
+    foreach ($stmt->fetchAll() as $row) {
+        $counts[(int) $row['student_id']] = (int) $row['absence_count'];
+    }
+
+    return $counts;
+}
+
 function attendance_record_status_meta(): array
 {
     return [

@@ -216,6 +216,33 @@
             }
         };
 
+        const resizeScheduleRows = () => {
+            if (!meetingCount || !list) {
+                return;
+            }
+
+            const min = parseInt(meetingCount.getAttribute('min') || '1', 10);
+            const max = parseInt(meetingCount.getAttribute('max') || '7', 10);
+            const selectedCount = parseInt(meetingCount.value, 10);
+            const desiredCount = Math.max(min, Math.min(max, Number.isNaN(selectedCount) ? min : selectedCount));
+
+            meetingCount.value = String(desiredCount);
+
+            while (list.querySelectorAll('[data-schedule-slot]').length < desiredCount) {
+                list.appendChild(buildScheduleSlotRow());
+            }
+
+            while (list.querySelectorAll('[data-schedule-slot]').length > desiredCount) {
+                const rows = list.querySelectorAll('[data-schedule-slot]');
+                rows[rows.length - 1]?.remove();
+            }
+        };
+
+        if (meetingCount) {
+            meetingCount.addEventListener('change', resizeScheduleRows);
+            meetingCount.addEventListener('input', resizeScheduleRows);
+        }
+
         block.addEventListener('click', (event) => {
             const target = event.target.closest('button');
 
@@ -224,8 +251,12 @@
             }
 
             if (target.matches('[data-add-schedule-slot]')) {
-                list.appendChild(buildScheduleSlotRow());
-                syncMeetingCount();
+                const maxRows = parseInt(meetingCount?.getAttribute('max') || '7', 10);
+
+                if (list.querySelectorAll('[data-schedule-slot]').length < maxRows) {
+                    list.appendChild(buildScheduleSlotRow());
+                    syncMeetingCount();
+                }
             }
 
             if (target.matches('[data-remove-schedule-slot]')) {
